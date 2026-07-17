@@ -19,6 +19,14 @@ rm -f /etc/sudoers.d/agent
 mkdir -p /home/agent/projects
 chown agent:agent /home/agent/projects
 
+# ホスト側ガード (sandbox/host_guard.ps1) がサンドボックス内パスを識別する
+# ためのマーカー。SSHFS 等でマウントされた場合の検知に使う。agent が消して
+# 警告を無効化できないよう root 所有 + immutable にする
+for f in /home/agent/.agent-sandbox /home/agent/projects/.agent-sandbox; do
+    [ -e "$f" ] || touch "$f"
+    chattr +i "$f" 2>/dev/null || true
+done
+
 # automount 無効化前の起動で作られたドライブ用空ディレクトリを掃除
 for d in /mnt/?; do rmdir "$d" 2>/dev/null || true; done
 

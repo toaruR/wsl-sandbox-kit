@@ -111,6 +111,32 @@ wsl -d agent-sandbox -u root -- apt-get install -y <パッケージ>
 }
 ```
 
+## ホスト側ガード: 誤ってホスト側で開いたときの警告・ブロック
+
+サンドボックス内のフォルダを**ホスト側の** VS Code / Claude Code で直接開くと
+(SSHFS マウントや `\\wsl.localhost` 経由)、エージェントがホスト Windows の
+権限で動いてしまい隔離が無意味になる。これを検知するフックは、知見記録キットが
+**インストール先プロジェクトにのみ**配置する(ユーザーグローバル設定には入れない):
+
+- 実体: インストール先の `.claude/hooks/sandbox_guard.py`(Python・
+  Windows / WSL 両対応)。install_kit.py / `/install-kit` が同プロジェクトの
+  `.claude/settings.json` の SessionStart / UserPromptSubmit に登録する
+- プロジェクトは `.claude/` ごと tar でサンドボックスへ搬入されるため、搬入後の
+  コピーを誤ってホスト側で開いた場合もフックが効く
+- 検知方法: ① `\\wsl.localhost\agent-sandbox` / `\\wsl$\...` パス、
+  ② SSHFS-Win の UNC(`\\sshfs\agent@localhost!2222` 等)とドライブ割り当て、
+  ③ マーカーファイル `.agent-sandbox` の祖先探索(provision.sh がディストロ内に
+  root 所有 + immutable で配置。マウント方法によらず効く)
+- 動作: セッション開始時に警告表示、プロンプト送信時は**ブロック**する。
+  警告だけにしたい場合はインストール先 settings.json の `UserPromptSubmit`
+  エントリを削除する
+- **Windows 以外では何もしない**: Remote-SSH で正しく開いた場合はディストロ内の
+  Claude Code がフックを実行するが、Linux 上なので即終了する(誤検知しない)
+- マーカー検知は provision 再実行(`python sandbox/setup_sandbox.py`)後に有効。
+  UNC / SSHFS パターン検知はそれ以前でも効く
+
+なお Codex CLI には同等のフック機構がないため、このガードは Claude Code のみ対象。
+
 ## ファイル構成
 
 ```
@@ -119,14 +145,33 @@ sandbox/
 ├── setup_sandbox.py       ← 初回セットアップ(冪等・再実行可)
 ├── provision.sh           ← ディストロ内プロビジョニング(setup から自動実行)
 ├── wsl.conf               ← 分離設定テンプレート(/etc/wsl.conf に配置される)
-└── open_in_sandbox.py     ← プロジェクト搬入・取り出し(--export)+ VS Code 起動
+├── open_in_sandbox.py     ← プロジェクト搬入・取り出し(--export)+ VS Code 起動
+└── destroy_sandbox.py     ← ガード付き破棄(git 状態確認・退避・最終確認)
 ```
+
+(誤オープン検知フック本体はキット側 `.claude/hooks/sandbox_guard.py` にある)
 
 ## ディストロの破棄・作り直し
 
+⚠️ ディストロは**全プロジェクト共有**。素の `wsl --unregister` は確認なしで
+即座に消え、`/home/agent/projects` 配下すべての未 push 作業と認証状態が
+一緒に失われる。破棄は必ずガード付きスクリプトで行うこと:
+
 ```
-wsl --unregister agent-sandbox
-python sandbox/setup_sandbox.py
+python sandbox/destroy_sandbox.py                        # git 状態を確認してから破棄
+python sandbox/destroy_sandbox.py --export-first <退避先>  # 全プロジェクトを退避してから破棄
+python sandbox/setup_sandbox.py                          # 再作成(認証は再度必要)
 ```
 
-破棄すればディストロ内の変更(認証情報含む)はすべて消える。
+- 未コミット / 未 push / git 管理外のプロジェクトが1つでもあれば一覧を出して
+  拒否する(push で回収してから再実行が推奨。承知のうえの強行は `--force`)
+- 実行前にディストロ名の入力による最終確認がある(スクリプト実行時は `--yes`)
+- 運用の原則: **ディストロは使い捨ての計算環境、永続化は git push のみ**。
+  この原則を守っていれば破棄はいつでも安全
+
+**特定プロジェクトだけ壊れた・作り直したい場合は破棄不要**:
+
+```
+wsl -d agent-sandbox -- rm -rf /home/agent/projects/<名前>
+python sandbox/open_in_sandbox.py <プロジェクトのパス>    # 再搬入
+```
