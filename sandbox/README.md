@@ -36,6 +36,7 @@ flowchart TB
     ProjA -->|"open_in_sandbox.py<br/>(tar搬入・置き換え)"| SA
     ProjB -->|"open_in_sandbox.py<br/>(tar搬入・置き換え)"| SB
     ProjA -.->|"update_kit_in_sandbox.py<br/>(本体に触れず差分同期)"| SA
+    SA -.->|"sync_from_sandbox.py<br/>(git bundle fetch, refs/remotes/sandbox/*)"| ProjA
 ```
 
 - **キット → インストール先**: `/install-kit` / `install_kit.py` で複数プロジェクトに
@@ -47,6 +48,9 @@ flowchart TB
   作られるわけではない)。
 - **差分同期**: キット更新後に再搬入(置き換え)せず反映したい場合は
   `update_kit_in_sandbox.py` を使う(下記「キット更新の反映」参照)。
+- **サンドボックス → インストール先**: `sync_from_sandbox.py` で
+  サンドボックス側プロジェクトの git 履歴を host 側リポジトリの
+  `refs/remotes/sandbox/*` へ取り込む(下記「成果物の回収」参照)。
 
 ## 方式と分離の範囲
 
@@ -120,8 +124,23 @@ python sandbox/open_in_sandbox.py [プロジェクトのパス]   # 省略時は
 
 成果物の回収:
 
-- **git push(推奨)**: ディストロ内から push し、ホスト側で pull する
+- **sync_from_sandbox.py(推奨)**: host 側から `wsl.exe` 経由でサンドボックス側の
+  git 履歴を bundle として取得し、host 側リポジトリの `refs/remotes/sandbox/*`
+  へ fetch する。origin リモートが無いローカル専用リポジトリでも使え、
+  host の作業ツリー・現在のブランチには一切触れないため何度でも安全に
+  再実行できる:
+
+  ```
+  python sandbox/sync_from_sandbox.py             # カレントディレクトリ名の対応プロジェクトを取り込む
+  git log sandbox/<branch>                        # 取り込んだブランチを確認
+  git merge sandbox/<branch>                       # 必要ならマージ
+  ```
+
+- **git push**: origin リモート(GitHub 等)があるプロジェクトなら、
+  ディストロ内から push し、ホスト側で pull してもよい
 - **逆コピー**: `python sandbox/open_in_sandbox.py --export <名前> <取り出し先>`
+  (取り出し先ディレクトリは空である必要があり、git 管理外ファイルを含めた
+  全体退避向け)
 - **エクスプローラー**: `\\wsl.localhost\agent-sandbox\home\agent\projects` を
   ホストから直接参照できる(閲覧・個別ファイルの取り出し向け。この UNC パスを
   ホスト側の Claude Code で開くと sandbox_guard がブロックする)
@@ -198,6 +217,9 @@ python sandbox/update_kit_in_sandbox.py --dry-run   # 反映せず内容だけ�
 - **Antigravity**: スタンドアロン CLI のインストール手順が未確認のため
   provision.sh はプレースホルダーのみ(手順判明後に追記)。VS Code 系 IDE の
   ため、IDE 側の WSL リモート接続で本ディストロに繋ぐ運用は可能。
+- **sync_from_sandbox.py は書き込み範囲が `refs/remotes/sandbox/*` に限られる**
+  安全設計(host の作業ツリー・現在のブランチには触れない)。取り込んだ後の
+  マージ・破棄は通常の git 操作として host 側で行うこと。
 
 ## 二層目: Claude Code 内蔵サンドボックスの併用
 
@@ -247,6 +269,7 @@ sandbox/
 ├── wsl.conf               ← 分離設定テンプレート(/etc/wsl.conf に配置される)
 ├── open_in_sandbox.py     ← プロジェクト搬入・取り出し(--export)+ VS Code 起動
 ├── update_kit_in_sandbox.py ← ディストロ内コピーへのキット更新(本体に触れない)
+├── sync_from_sandbox.py   ← 成果物回収(git bundle fetch → refs/remotes/sandbox/*)
 └── destroy_sandbox.py     ← ガード付き破棄(git 状態確認・退避・最終確認)
 ```
 
