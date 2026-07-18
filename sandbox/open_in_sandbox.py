@@ -80,6 +80,8 @@ def import_project(src: Path, name: str, distro: str, force: bool):
                      check=False, capture=True)
     if exists.returncode == 0:
         if not force:
+            print(f"警告: 置き換えると {linux_dest} 内の未 push 作業はすべて失われます。\n"
+                  "      キット更新が目的なら update_kit_in_sandbox.py を使ってください。")
             answer = input(f"{linux_dest} は既に存在します。中身を置き換えますか? [y/N]: ")
             if answer.strip().lower() != "y":
                 print("中断しました(追記コピーはしません)。")

@@ -80,6 +80,28 @@ python sandbox/open_in_sandbox.py <プロジェクトのパス>
 wsl -d agent-sandbox -u root -- apt-get install -y <パッケージ>
 ```
 
+## キット更新の反映(再搬入はしない)
+
+⚠️ open_in_sandbox.py の再搬入は既存プロジェクトを**丸ごと置き換える**
+(rm -rf + コピー)ため、知見記録キットの更新をディストロ内のコピーへ反映する
+手段に使わないこと。エージェントの未 push 作業が消える。更新はプロジェクト
+本体に触れない専用スクリプトで行う:
+
+```
+python sandbox/update_kit_in_sandbox.py <プロジェクト名>   # 1つだけ
+python sandbox/update_kit_in_sandbox.py --all              # 全プロジェクト
+```
+
+- キット一式を tar でディストロ内 staging(`/home/agent/.knowledge-kit`)へ送り、
+  **ディストロ内で** install_kit.py を実行する。バージョン比較・マーカー管理に
+  より、手動編集の疑いがあるファイルは skip され、ハマりポイントと
+  docs/specification.md は保護される
+- 更新結果はサンドボックス側コピーの未コミット差分として現れるので、
+  エージェントの通常フロー(コミット → push)で回収する
+- 代替: ホスト側コピーに install_kit.py を当てて push → ディストロ内で pull
+  でも同じ結果になる(install_kit.py は決定的に同じファイルを生成するため、
+  両側で個別に更新しても衝突しにくい)
+
 ## 注意点・ハマりポイント
 
 - **ディストロ内から `code .` は使えない**(interop 無効)。VS Code への接続は
@@ -146,6 +168,7 @@ sandbox/
 ├── provision.sh           ← ディストロ内プロビジョニング(setup から自動実行)
 ├── wsl.conf               ← 分離設定テンプレート(/etc/wsl.conf に配置される)
 ├── open_in_sandbox.py     ← プロジェクト搬入・取り出し(--export)+ VS Code 起動
+├── update_kit_in_sandbox.py ← ディストロ内コピーへのキット更新(本体に触れない)
 └── destroy_sandbox.py     ← ガード付き破棄(git 状態確認・退避・最終確認)
 ```
 

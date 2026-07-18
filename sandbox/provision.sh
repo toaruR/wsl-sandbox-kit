@@ -19,7 +19,7 @@ rm -f /etc/sudoers.d/agent
 mkdir -p /home/agent/projects
 chown agent:agent /home/agent/projects
 
-# ホスト側ガード (sandbox/host_guard.ps1) がサンドボックス内パスを識別する
+# ホスト側ガード (.claude/hooks/sandbox_guard.py) がサンドボックス内パスを識別する
 # ためのマーカー。SSHFS 等でマウントされた場合の検知に使う。agent が消して
 # 警告を無効化できないよう root 所有 + immutable にする
 for f in /home/agent/.agent-sandbox /home/agent/projects/.agent-sandbox; do
