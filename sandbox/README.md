@@ -11,6 +11,43 @@ AI エージェント(Claude Code / Codex CLI 等)を、ホスト Windows から
 `setup_sandbox.py` を実行しても同じディストロに冪等に作用する。プロジェクトごとに
 別ディストロが作られるわけではない。
 
+## 全体像: キット / インストール先 / サンドボックスの関係
+
+**知見記録キットは1つ、インストール先プロジェクトは複数、サンドボックスは
+マシンに1つ**という非対称な関係になっている(サンドボックス内では
+プロジェクトごとにサブディレクトリが分かれる)。
+
+```mermaid
+flowchart TB
+    Kit["知見記録キット (1つ)<br/>sandbox/ 一式・sandbox_guard.py 等"]
+
+    subgraph Host["ホスト Windows"]
+        ProjA["インストール先 A<br/>sandbox/*.py・.claude/hooks/sandbox_guard.py"]
+        ProjB["インストール先 B<br/>sandbox/*.py・.claude/hooks/sandbox_guard.py"]
+    end
+
+    subgraph WSL["agent-sandbox (WSL2ディストロ)<br/>マシンに1つ・全プロジェクト共用"]
+        SA["/home/agent/projects/A"]
+        SB["/home/agent/projects/B"]
+    end
+
+    Kit -->|"/install-kit・install_kit.py<br/>(キット所有・差分は上書き)"| ProjA
+    Kit -->|同上| ProjB
+    ProjA -->|"open_in_sandbox.py<br/>(tar搬入・置き換え)"| SA
+    ProjB -->|"open_in_sandbox.py<br/>(tar搬入・置き換え)"| SB
+    ProjA -.->|"update_kit_in_sandbox.py<br/>(本体に触れず差分同期)"| SA
+```
+
+- **キット → インストール先**: `/install-kit` / `install_kit.py` で複数プロジェクトに
+  コピーされる。キット所有ファイル(本ディレクトリ一式など)は差分があれば
+  キット側の内容で上書きされる。
+- **インストール先 → サンドボックス**: `open_in_sandbox.py` でプロジェクトを
+  ディストロ内 `/home/agent/projects/<名前>` へ tar 搬入する。**どのインストール先
+  から実行しても同じ1つのディストロに作用する**(プロジェクトごとに別ディストロが
+  作られるわけではない)。
+- **差分同期**: キット更新後に再搬入(置き換え)せず反映したい場合は
+  `update_kit_in_sandbox.py` を使う(下記「キット更新の反映」参照)。
+
 ## 方式と分離の範囲
 
 VS Code の UI はホスト(Windows ネイティブ)のまま、**Remote-SSH 接続**

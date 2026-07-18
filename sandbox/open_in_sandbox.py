@@ -3,11 +3,13 @@
 
 - プロジェクトを tar 化し、wsl.exe の stdin 経由でディストロ内
   /home/agent/projects/<名前> に展開する
-  (\\\\wsl.localhost 共有経由の UNC コピーでも届くが、除外フィルタと
-  所有者・パーミッションの正しさのため tar ストリームを使い続ける)
 - node_modules / .venv / __pycache__ はコピーしない(ディストロ内で入れ直す)
 - コピー後、ホスト側から `code --remote ssh-remote+<distro>` で VS Code を起動する
   (WSL リモート拡張は automount 前提で分離ディストロでは動かないため Remote-SSH)
+
+コピー元が別の WSL ディストロ上にある場合(例: `\\\\wsl.localhost\\Ubuntu\\home\\...`)は、
+Windows ホスト経由で読まず tar ストリームをディストロ間で直結する
+(実行ビット・シンボリックリンクが Windows 経由だと壊れることがあるため)。
 
 成果物の回収は git push、または --export による逆方向コピーで行う
 (詳細: sandbox/README.md)。
@@ -15,7 +17,8 @@
 使い方:
     python open_in_sandbox.py [プロジェクトのパス] [--name <名前>]
                               [--distro agent-sandbox] [--force] [--no-code]
-                              (プロジェクトのパスを省略するとカレントディレクトリを使う)
+                              (プロジェクトのパスを省略するとカレントディレクトリを使う。
+                               \\\\wsl.localhost\\<別ディストロ>\\... 形式も指定可)
     python open_in_sandbox.py --export <名前> <取り出し先ディレクトリ>
 """
 
@@ -27,7 +30,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 DEFAULT_DISTRO = "agent-sandbox"
 COPY_EXCLUDE = {"node_modules", ".venv", "__pycache__"}
@@ -59,6 +62,23 @@ def run_wsl(args, check=True, capture=False, stdin=None, stdout=None):
 def check_name(name: str):
     if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
         raise OpenError(f"名前に使えない文字が含まれています: {name}(--name で指定してください)")
+
+
+WSL_UNC_RE = re.compile(r"^[\\/]{2}wsl(?:\.localhost|\$)[\\/]([^\\/]+)[\\/](.*)$", re.IGNORECASE)
+
+
+def parse_wsl_unc(raw: str):
+    """\\wsl.localhost\<distro>\<path> 形式なら (distro, linux_path) を返す。該当しなければ None。
+
+    Windows ホストの Python でこの形式のパスを直接読み書きすると、実行ビットや
+    シンボリックリンクが正しく引き継がれないことがあるため、該当する場合は
+    tar ストリームをディストロ間で直結する経路(import_project_from_wsl)に回す。
+    """
+    m = WSL_UNC_RE.match(raw)
+    if not m:
+        return None
+    distro, rest = m.group(1), m.group(2).replace("\\", "/").rstrip("/")
+    return distro, "/" + rest
 
 
 def make_tar(src: Path, tmp_path: str):
@@ -105,6 +125,53 @@ def import_project(src: Path, name: str, distro: str, force: bool):
     return linux_dest
 
 
+def import_project_from_wsl(src_distro: str, linux_src: str, name: str, distro: str, force: bool):
+    """別 WSL ディストロ上のプロジェクトを、ホストを経由せずディストロ間で直接コピーする。
+
+    tar ストリームを wsl.exe 同士で直結する(source distro の tar 標準出力を
+    そのまま dest distro の tar 標準入力へパイプする)。Windows 側の Python で
+    \\wsl.localhost 経由に読み書きすると実行ビットやシンボリックリンクが壊れることが
+    あるため、この経路では一切 Windows 側にファイル内容を読み込ませない。
+    """
+    linux_dest = f"{PROJECTS_DIR}/{name}"
+    exists = run_wsl(["-d", distro, "--", "test", "-e", linux_dest],
+                     check=False, capture=True)
+    if exists.returncode == 0:
+        if not force:
+            print(f"警告: 置き換えると {linux_dest} 内の未 push 作業はすべて失われます。\n"
+                  "      キット更新が目的なら update_kit_in_sandbox.py を使ってください。")
+            answer = input(f"{linux_dest} は既に存在します。中身を置き換えますか? [y/N]: ")
+            if answer.strip().lower() != "y":
+                print("中断しました(追記コピーはしません)。")
+                return None
+        run_wsl(["-d", distro, "--", "rm", "-rf", linux_dest])
+        print(f"既存の {linux_dest} を削除しました")
+
+    print(f"コピー中(WSL間直結): {src_distro}:{linux_src} → {distro}:{linux_dest}")
+    exclude_args = []
+    for pattern in COPY_EXCLUDE:
+        exclude_args += ["--exclude", pattern]
+
+    env = os.environ.copy()
+    env["WSL_UTF8"] = "1"
+    src_proc = subprocess.Popen(
+        ["wsl.exe", "-d", src_distro, "--", "tar", "-cf", "-", "-C", linux_src, *exclude_args, "."],
+        env=env, stdout=subprocess.PIPE)
+    dst_proc = subprocess.Popen(
+        ["wsl.exe", "-d", distro, "--", "bash", "-c",
+         f"mkdir -p {linux_dest} && tar -xf - -C {linux_dest}"],
+        env=env, stdin=src_proc.stdout)
+    src_proc.stdout.close()  # dst_proc 側だけがパイプの読み手になるようにする(SIGPIPE を正しく伝える)
+    dst_rc = dst_proc.wait()
+    src_rc = src_proc.wait()
+    if src_rc != 0 or dst_rc != 0:
+        raise OpenError(
+            f"WSL間コピーが失敗しました(source exit {src_rc} / dest exit {dst_rc})。"
+            f"{src_distro} 側にプロジェクトが存在するか確認してください: {linux_src}")
+    print("コピー完了(node_modules / .venv / __pycache__ は除外。ディストロ内で入れ直してください)")
+    return linux_dest
+
+
 def export_project(name: str, dest_dir: Path, distro: str):
     """ディストロ内のプロジェクトを tar ストリームでホストへ取り出す。"""
     linux_src = f"{PROJECTS_DIR}/{name}"
@@ -129,7 +196,8 @@ def main():
     ap = argparse.ArgumentParser(description="プロジェクトをサンドボックスへ搬入して VS Code で開く")
     ap.add_argument("project", nargs="?", default=None,
                     help="搬入するプロジェクトのパス(--export 時はディストロ内の名前)。"
-                         "省略時はカレントディレクトリ")
+                         "省略時はカレントディレクトリ。"
+                         "\\\\wsl.localhost\\<別ディストロ>\\... 形式ならディストロ間で直接コピーする")
     ap.add_argument("export_dest", nargs="?", default=None,
                     help="--export 時の取り出し先ディレクトリ")
     ap.add_argument("--name", default=None, help="ディストロ内での名前(既定: ディレクトリ名)")
@@ -162,13 +230,26 @@ def main():
             export_project(args.project, Path(args.export_dest).resolve(), args.distro)
             return 0
 
-        src = Path(args.project or ".").resolve()
-        if not src.is_dir():
-            raise OpenError(f"プロジェクトディレクトリがありません: {src}")
-        name = args.name or src.name
-        check_name(name)
-
-        linux_dest = import_project(src, name, args.distro, args.force)
+        project_arg = args.project or "."
+        wsl_src = parse_wsl_unc(project_arg)
+        if wsl_src:
+            src_distro, linux_src = wsl_src
+            if src_distro.lower() == args.distro.lower():
+                raise OpenError(f"コピー元とコピー先が同じディストロです: {src_distro}")
+            reachable = run_wsl(["-d", src_distro, "--", "test", "-d", linux_src],
+                                check=False, capture=True)
+            if reachable.returncode != 0:
+                raise OpenError(f"プロジェクトディレクトリがありません: {src_distro}:{linux_src}")
+            name = args.name or PurePosixPath(linux_src).name
+            check_name(name)
+            linux_dest = import_project_from_wsl(src_distro, linux_src, name, args.distro, args.force)
+        else:
+            src = Path(project_arg).resolve()
+            if not src.is_dir():
+                raise OpenError(f"プロジェクトディレクトリがありません: {src}")
+            name = args.name or src.name
+            check_name(name)
+            linux_dest = import_project(src, name, args.distro, args.force)
         if linux_dest is None:
             return 1
 
