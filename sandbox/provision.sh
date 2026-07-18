@@ -3,6 +3,10 @@
 # setup_sandbox.py から `wsl -d <distro> -u root bash -s` 形式で流し込まれる。
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+# wsl.exe 起動時の cwd はホスト側 (/mnt/d/...) を引き継ぐことがある。後述の
+# ホストドライブ unmount で自分の cwd が消えると npm 等が uv_cwd ENOENT で
+# 死ぬため、最初に安全な場所へ移動しておく
+cd /
 
 echo "== ユーザー作成 =="
 if ! id -u agent >/dev/null 2>&1; then
@@ -38,6 +42,37 @@ ln -sf /dev/null /etc/binfmt.d/WSLInterop.conf
 if [ -e /proc/sys/fs/binfmt_misc/WSLInterop ]; then
     echo -1 > /proc/sys/fs/binfmt_misc/WSLInterop 2>/dev/null || true
 fi
+
+echo "== ホストドライブの unmount(毎 boot)=="
+# wsl.conf の automount は有効(\\wsl.localhost 共有を担う plan9 サーバーが
+# automount 設定に連動して起動するため)。代わりにホストドライブ (drvfs) を
+# boot のたびに unmount して分離を保つ。agent に sudo は無いので再マウント不可。
+# 共有(plan9)は unmount 後も生き続けることを確認済み
+cat > /usr/local/sbin/sandbox-umount-host-drives <<'EOF'
+#!/bin/sh
+grep drvfs /proc/mounts | cut -d' ' -f2 | while read -r m; do
+    umount "$m" 2>/dev/null || umount -l "$m"
+    rmdir "$m" 2>/dev/null || true
+done
+exit 0
+EOF
+chmod 755 /usr/local/sbin/sandbox-umount-host-drives
+cat > /etc/systemd/system/sandbox-umount-host-drives.service <<'EOF'
+[Unit]
+Description=Unmount Windows host drives (sandbox isolation)
+Before=ssh.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/sandbox-umount-host-drives
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable sandbox-umount-host-drives.service >/dev/null 2>&1 || true
+/usr/local/sbin/sandbox-umount-host-drives
 
 echo "== 基本パッケージ =="
 apt-get update -y -qq

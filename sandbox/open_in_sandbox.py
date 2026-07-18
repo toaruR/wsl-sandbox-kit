@@ -3,8 +3,8 @@
 
 - プロジェクトを tar 化し、wsl.exe の stdin 経由でディストロ内
   /home/agent/projects/<名前> に展開する
-  (interop 無効の分離ディストロでは \\\\wsl.localhost 共有が使えないため、
-  UNC パスではなく tar ストリームでコピーする)
+  (\\\\wsl.localhost 共有経由の UNC コピーでも届くが、除外フィルタと
+  所有者・パーミッションの正しさのため tar ストリームを使い続ける)
 - node_modules / .venv / __pycache__ はコピーしない(ディストロ内で入れ直す)
 - コピー後、ホスト側から `code --remote ssh-remote+<distro>` で VS Code を起動する
   (WSL リモート拡張は automount 前提で分離ディストロでは動かないため Remote-SSH)
@@ -13,8 +13,9 @@
 (詳細: sandbox/README.md)。
 
 使い方:
-    python open_in_sandbox.py <プロジェクトのパス> [--name <名前>]
+    python open_in_sandbox.py [プロジェクトのパス] [--name <名前>]
                               [--distro agent-sandbox] [--force] [--no-code]
+                              (プロジェクトのパスを省略するとカレントディレクトリを使う)
     python open_in_sandbox.py --export <名前> <取り出し先ディレクトリ>
 """
 
@@ -126,7 +127,9 @@ def export_project(name: str, dest_dir: Path, distro: str):
 
 def main():
     ap = argparse.ArgumentParser(description="プロジェクトをサンドボックスへ搬入して VS Code で開く")
-    ap.add_argument("project", help="搬入するプロジェクトのパス(--export 時はディストロ内の名前)")
+    ap.add_argument("project", nargs="?", default=None,
+                    help="搬入するプロジェクトのパス(--export 時はディストロ内の名前)。"
+                         "省略時はカレントディレクトリ")
     ap.add_argument("export_dest", nargs="?", default=None,
                     help="--export 時の取り出し先ディレクトリ")
     ap.add_argument("--name", default=None, help="ディストロ内での名前(既定: ディレクトリ名)")
@@ -153,13 +156,13 @@ def main():
                 "先に `python sandbox/setup_sandbox.py` を実行してください。")
 
         if args.export:
-            if not args.export_dest:
-                raise OpenError("--export には取り出し先ディレクトリも指定してください。")
+            if not args.project or not args.export_dest:
+                raise OpenError("--export には名前と取り出し先ディレクトリの両方を指定してください。")
             check_name(args.project)
             export_project(args.project, Path(args.export_dest).resolve(), args.distro)
             return 0
 
-        src = Path(args.project).resolve()
+        src = Path(args.project or ".").resolve()
         if not src.is_dir():
             raise OpenError(f"プロジェクトディレクトリがありません: {src}")
         name = args.name or src.name

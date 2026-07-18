@@ -4,6 +4,13 @@ AI エージェント(Claude Code / Codex CLI 等)を、ホスト Windows から
 専用の WSL2 ディストロ内で動かすための一式。自動承認モードでエージェントを
 走らせても、被害がディストロ内に閉じることを目的とする。
 
+このディレクトリ自体は知見記録キットの管理下にあり、`/install-kit`・
+`install_kit.py` によって複数のプロジェクトへコピーされる(キット所有・差分は
+キット版で上書き)。ただし操作対象の WSL2 ディストロ(`agent-sandbox`)は
+**マシンに1つの共用環境のまま**であり、どのプロジェクトのコピーから
+`setup_sandbox.py` を実行しても同じディストロに冪等に作用する。プロジェクトごとに
+別ディストロが作られるわけではない。
+
 ## 方式と分離の範囲
 
 VS Code の UI はホスト(Windows ネイティブ)のまま、**Remote-SSH 接続**
@@ -12,17 +19,17 @@ VS Code の UI はホスト(Windows ネイティブ)のまま、**Remote-SSH 接
 
 ⚠️ VS Code の **WSL リモート拡張(`wsl+`)は使えない**: あの拡張は Windows 側の
 拡張ディレクトリやサーバー tarball を `/mnt/c`(automount)経由で読む前提で
-動くため、automount を無効にした分離ディストロでは必ず失敗する
+動くため、ホストドライブを unmount する分離ディストロでは必ず失敗する
 (`Failed to translate 'c:\...'` → `wslServer.sh: not found`)。
 このため接続は Remote-SSH で行う。鍵と `~/.ssh/config` の `Host agent-sandbox`
 エントリは setup_sandbox.py が自動で用意する。
 
 | 項目 | 状態 |
 |---|---|
-| ホストのドライブ (C:/D:) | **見えない**(`automount` 無効) |
+| ホストのドライブ (C:/D:) | **見えない**(automount 自体は有効だが、systemd ユニットが毎 boot 全ホストドライブを unmount) |
 | Windows 実行ファイルの起動 | **できない**(`interop` 無効) |
-| sudo / root | **エージェントには与えない**(sudo があると drvfs でホストドライブをマウントでき分離が破れる) |
-| `\\wsl.localhost` 共有 | **使えない**(interop 無効の副作用で Plan9 共有も止まる)。コピーは tar ストリームで行う |
+| sudo / root | **エージェントには与えない**(sudo があると drvfs でホストドライブを再マウントでき分離が破れる) |
+| `\\wsl.localhost` 共有 | **使える**(ホスト → ディストロ方向のみ。誤ってこのパスをホスト側 Claude Code で開くと sandbox_guard がブロック) |
 | ネットワーク | **制限なし**(API 呼び出し・npm install 等は素通し) |
 | 二層目の防御 | Linux 上なので Claude Code / Codex 内蔵サンドボックスも有効化可 |
 
@@ -34,6 +41,11 @@ VS Code の UI はホスト(Windows ネイティブ)のまま、**Remote-SSH 接
 - WSL2 の全ディストロは**1つの VM・カーネルを共有**している。カーネルレベルの
   脆弱性に対する強固な境界(Hyper-V VM 分離ほど)ではない。日常の暴走・誤操作
   対策と割り切ること。
+- `\\wsl.localhost` 共有を担う plan9 サーバーは automount 設定に連動して起動する
+  ため、automount は有効にしてあり、ホストドライブは boot 時の systemd ユニット
+  (`sandbox-umount-host-drives`)で unmount している。boot 直後のごく短い間だけ
+  ドライブがマウントされた状態が存在する(sshd より先に unmount が走るよう順序付け
+  済み。上記「日常の暴走・誤操作対策」の範囲)。
 
 ## セットアップ(初回のみ)
 
@@ -58,7 +70,7 @@ $ codex login     # 同上
 ## 日常の使い方
 
 ```
-python sandbox/open_in_sandbox.py <プロジェクトのパス>
+python sandbox/open_in_sandbox.py [プロジェクトのパス]   # 省略時はカレントディレクトリ
 ```
 
 1. プロジェクトが tar ストリーム経由でディストロ内
@@ -73,12 +85,30 @@ python sandbox/open_in_sandbox.py <プロジェクトのパス>
 
 - **git push(推奨)**: ディストロ内から push し、ホスト側で pull する
 - **逆コピー**: `python sandbox/open_in_sandbox.py --export <名前> <取り出し先>`
+- **エクスプローラー**: `\\wsl.localhost\agent-sandbox\home\agent\projects` を
+  ホストから直接参照できる(閲覧・個別ファイルの取り出し向け。この UNC パスを
+  ホスト側の Claude Code で開くと sandbox_guard がブロックする)
 
 パッケージの追加(エージェントに sudo は無い)はホスト側から行う:
 
 ```
 wsl -d agent-sandbox -u root -- apt-get install -y <パッケージ>
 ```
+
+### VS Code を閉じてしまった場合の再オープン
+
+搬入済みのプロジェクトへ繋ぎ直すだけなら再搬入は不要。以下のどちらかで開く:
+
+```
+code --remote ssh-remote+agent-sandbox /home/agent/projects/<名前>
+```
+
+または `open_in_sandbox.py` を再実行してもよいが、既存コピーがある場合は
+「置き換えますか?」の確認が出る(`N`/Enter で中断すれば中身は消えない)。
+確認なしで開きたいだけなら上記の `code --remote` を直接使うほうが早い。
+
+ディストロ自体が止まっている場合は先に `wsl -d agent-sandbox` で起こしておく
+(systemd 有効なので以後は動き続ける)。
 
 ## キット更新の反映(再搬入はしない)
 
@@ -87,20 +117,31 @@ wsl -d agent-sandbox -u root -- apt-get install -y <パッケージ>
 手段に使わないこと。エージェントの未 push 作業が消える。更新はプロジェクト
 本体に触れない専用スクリプトで行う:
 
+**インストール先プロジェクト**(このスクリプトが `/install-kit` で配置された先)の
+カレントディレクトリで実行する。install_kit.py は移植先には存在しないため、
+サンドボックス側で再インストールを実行するのではなく、カレントの
+キット管理ファイルをサンドボックス側コピーへ直接同期する。プロジェクト名の
+指定や `--all` はできない(同期元がカレント固定のため、別名を受け付けると
+無関係なプロジェクトをカレントの内容で上書きしてしまう):
+
 ```
-python sandbox/update_kit_in_sandbox.py <プロジェクト名>   # 1つだけ
-python sandbox/update_kit_in_sandbox.py --all              # 全プロジェクト
+python sandbox/update_kit_in_sandbox.py             # カレントディレクトリ名の対応プロジェクトを更新
+python sandbox/update_kit_in_sandbox.py --dry-run   # 反映せず内容だけ確認
 ```
 
-- キット一式を tar でディストロ内 staging(`/home/agent/.knowledge-kit`)へ送り、
-  **ディストロ内で** install_kit.py を実行する。バージョン比較・マーカー管理に
-  より、手動編集の疑いがあるファイルは skip され、ハマりポイントと
-  docs/specification.md は保護される
+- 完全キット所有ファイル(sandbox/ 一式・.claude/commands/spec-doc.md・
+  .claude/commands/smart-commit.md・.claude/hooks/sandbox_guard.py)は
+  カレント側の内容で丸ごと上書きする
+- CLAUDE.md・AGENTS.md・docs/knowledge-kit-usage.md の知見記録キット管理区間
+  (HTML コメントマーカー)はカレント側の内容で上書きするが、「ハマりポイント」
+  区間だけはカレント側とサンドボックス側の箇条書きをマージする(重複除去した
+  うえで、サンドボックス側にしかない項目を残す)。マーカー外の内容や
+  docs/specification.md は一切変更しない
+- マーカーが壊れている・見つからないなど安全にマージできない場合は
+  そのファイルを警告付きで skip する(`--force` で強制的にカレント側の
+  内容に上書きすることもできる)
 - 更新結果はサンドボックス側コピーの未コミット差分として現れるので、
   エージェントの通常フロー(コミット → push)で回収する
-- 代替: ホスト側コピーに install_kit.py を当てて push → ディストロ内で pull
-  でも同じ結果になる(install_kit.py は決定的に同じファイルを生成するため、
-  両側で個別に更新しても衝突しにくい)
 
 ## 注意点・ハマりポイント
 

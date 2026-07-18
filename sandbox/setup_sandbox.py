@@ -3,7 +3,9 @@
 
 ホスト保護の設計(詳細: sandbox/README.md):
 - 専用ディストロを import で新規作成(既存の開発用 WSL とは別)
-- /etc/wsl.conf で automount(C:/D: マウント)と interop(Windows exe 起動)を無効化
+- /etc/wsl.conf で interop(Windows exe 起動)を無効化。automount は
+  \\wsl.localhost 共有(ホスト → ディストロのアクセス)のため有効にし、
+  ホストドライブは provision.sh が入れる systemd ユニットが毎 boot unmount する
 - provision.sh で Node.js とエージェント CLI(claude / codex)を導入
 - ネットワークは制限しない(ファイルシステム分離のみが目的)
 
@@ -100,7 +102,7 @@ def apply_wsl_conf(distro: str):
              "cat > /etc/wsl.conf"], input_text=conf)
     # automount/interop/default user の反映には再起動が必要
     run_wsl(["--terminate", distro], check=False)
-    print("wsl.conf を配置し、ディストロを再起動しました(automount/interop 無効)")
+    print("wsl.conf を配置し、ディストロを再起動しました(interop 無効 / automount 有効・ドライブは boot 時 unmount)")
 
 
 def provision(distro: str):
@@ -134,6 +136,7 @@ def setup_ssh_access(distro: str):
     # provision と同じく stdin からスクリプトを流し込む(鍵は ssh 公開鍵形式
     # なのでシングルクォートを含まない)
     register = (
+        "cd /\n"  # cwd がホストドライブ上だと unmount 後に消えているため
         f"key='{pubkey}'\n"
         "f=/home/agent/.ssh/authorized_keys\n"
         "install -d -m 700 -o agent -g agent /home/agent/.ssh\n"
@@ -174,11 +177,17 @@ def verify_ssh(distro: str):
 def verify(distro: str):
     """分離設定と導入結果を確認する。失敗しても停止せず警告に留める。"""
     # /mnt のディレクトリ名ではなく実マウントを見る(過去の起動で残った
-    # 空ディレクトリを誤検知しないため)
-    mounts = run_wsl(["-d", distro, "--", "bash", "-c", "mount | grep -i drvfs || true"],
-                     capture=True, check=False)
+    # 空ディレクトリを誤検知しないため)。automount で付いたドライブは
+    # boot 時の systemd ユニットが外すため、直後の起動では少し待って再確認する
+    for attempt in range(5):
+        mounts = run_wsl(["-d", distro, "--", "bash", "-c", "mount | grep -i drvfs || true"],
+                         capture=True, check=False)
+        if not mounts.stdout.strip():
+            break
+        time.sleep(2)
     if mounts.stdout.strip():
-        print(f"警告: ホストドライブがマウントされています(wsl.conf の反映を確認してください):\n{mounts.stdout}")
+        print("警告: ホストドライブがマウントされています"
+              f"(sandbox-umount-host-drives ユニットを確認してください):\n{mounts.stdout}")
     else:
         print("検証: ホストドライブのマウントなし → OK")
     interop = run_wsl(["-d", distro, "--", "bash", "-c",
@@ -188,6 +197,12 @@ def verify(distro: str):
         print("検証: Windows interop 無効 → OK")
     else:
         print("警告: Windows interop が有効のままです(wsl.conf の反映を確認してください)")
+    share = Path(rf"\\wsl.localhost\{distro}\home\agent")
+    if share.is_dir():
+        print(rf"検証: \\wsl.localhost\{distro} 共有 → OK")
+    else:
+        print(rf"警告: \\wsl.localhost\{distro} にアクセスできません"
+              "(automount 設定の反映を確認してください)")
     who = run_wsl(["-d", distro, "--", "whoami"], capture=True, check=False)
     if who.stdout.strip() == "agent":
         print("検証: 既定ユーザー agent → OK")
@@ -254,8 +269,8 @@ def main():
                 src = args.tarball or f"{ROOTFS_URL} をダウンロード"
                 print(f"  - rootfs: {src}")
                 print(f"  - wsl --import {args.distro} {install_dir}")
-            print("  - /etc/wsl.conf 配置(automount/interop 無効化)+ 再起動")
-            print("  - provision.sh 実行(agent ユーザー / Node.js / claude / codex)")
+            print("  - /etc/wsl.conf 配置(interop 無効 / automount 有効)+ 再起動")
+            print("  - provision.sh 実行(agent ユーザー / ドライブ unmount ユニット / Node.js / claude / codex)")
             return 0
 
         if exists:
