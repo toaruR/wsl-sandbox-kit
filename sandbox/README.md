@@ -8,8 +8,8 @@ AI エージェント(Claude Code / Codex CLI 等)を、ホスト Windows から
 `install_kit.py` によって複数のプロジェクトへコピーされる(キット所有・差分は
 キット版で上書き)。ただし操作対象の WSL2 ディストロ(`agent-sandbox`)は
 **マシンに1つの共用環境のまま**であり、どのプロジェクトのコピーから
-`setup_sandbox.py` を実行しても同じディストロに冪等に作用する。プロジェクトごとに
-別ディストロが作られるわけではない。
+`/sandbox-setup`(`setup_sandbox.py` のラッパー)を実行しても同じディストロに
+冪等に作用する。プロジェクトごとに別ディストロが作られるわけではない。
 
 ## 全体像: キット / インストール先 / サンドボックスの関係
 
@@ -33,23 +33,24 @@ flowchart TB
 
     Kit -->|"/install-kit・install_kit.py<br/>(キット所有・差分は上書き)"| ProjA
     Kit -->|同上| ProjB
-    ProjA -->|"open_in_sandbox.py<br/>(tar搬入・置き換え)"| SA
-    ProjB -->|"open_in_sandbox.py<br/>(tar搬入・置き換え)"| SB
-    ProjA -.->|"update_kit_in_sandbox.py<br/>(本体に触れず差分同期)"| SA
-    SA -.->|"sync_from_sandbox.py<br/>(git bundle fetch, refs/remotes/sandbox/*)"| ProjA
+    ProjA -->|"/sandbox-open・open_in_sandbox.py<br/>(tar搬入・置き換え)"| SA
+    ProjB -->|"/sandbox-open・open_in_sandbox.py<br/>(tar搬入・置き換え)"| SB
+    ProjA -.->|"/sandbox-update-kit・update_kit_in_sandbox.py<br/>(本体に触れず差分同期)"| SA
+    SA -.->|"/sandbox-sync・sync_from_sandbox.py<br/>(git bundle fetch, refs/remotes/sandbox/*)"| ProjA
 ```
 
 - **キット → インストール先**: `/install-kit` / `install_kit.py` で複数プロジェクトに
   コピーされる。キット所有ファイル(本ディレクトリ一式など)は差分があれば
   キット側の内容で上書きされる。
-- **インストール先 → サンドボックス**: `open_in_sandbox.py` でプロジェクトを
-  ディストロ内 `/home/agent/projects/<名前>` へ tar 搬入する。**どのインストール先
-  から実行しても同じ1つのディストロに作用する**(プロジェクトごとに別ディストロが
-  作られるわけではない)。
+- **インストール先 → サンドボックス**: `/sandbox-open`(`open_in_sandbox.py` の
+  ラッパー)でプロジェクトをディストロ内 `/home/agent/projects/<名前>` へ tar 搬入
+  する。**どのインストール先から実行しても同じ1つのディストロに作用する**
+  (プロジェクトごとに別ディストロが作られるわけではない)。
 - **差分同期**: キット更新後に再搬入(置き換え)せず反映したい場合は
-  `update_kit_in_sandbox.py` を使う(下記「キット更新の反映」参照)。
-- **サンドボックス → インストール先**: `sync_from_sandbox.py` で
-  サンドボックス側プロジェクトの git 履歴を host 側リポジトリの
+  `/sandbox-update-kit`(`update_kit_in_sandbox.py` のラッパー)を使う
+  (下記「キット更新の反映」参照)。
+- **サンドボックス → インストール先**: `/sandbox-sync`(`sync_from_sandbox.py` の
+  ラッパー)でサンドボックス側プロジェクトの git 履歴を host 側リポジトリの
   `refs/remotes/sandbox/*` へ取り込む(下記「成果物の回収」参照)。
 
 ## 方式と分離の範囲
@@ -91,7 +92,8 @@ VS Code の UI はホスト(Windows ネイティブ)のまま、**Remote-SSH 接
 ## セットアップ(初回のみ)
 
 ```
-python sandbox/setup_sandbox.py
+/sandbox-setup                              # Claude Code
+python sandbox/setup_sandbox.py             # スクリプト直接実行(Claude Code 以外)
 ```
 
 Ubuntu 24.04 rootfs のダウンロード → `agent-sandbox` ディストロの import →
@@ -111,7 +113,8 @@ $ codex login     # 同上
 ## 日常の使い方
 
 ```
-python sandbox/open_in_sandbox.py [プロジェクトのパス]   # 省略時はカレントディレクトリ
+/sandbox-open [プロジェクトのパス]                        # 省略時はカレントディレクトリ(Claude Code)
+python sandbox/open_in_sandbox.py [プロジェクトのパス]     # スクリプト直接実行(Claude Code 以外)
 ```
 
 1. プロジェクトが tar ストリーム経由でディストロ内
@@ -124,21 +127,23 @@ python sandbox/open_in_sandbox.py [プロジェクトのパス]   # 省略時は
 
 成果物の回収:
 
-- **sync_from_sandbox.py(推奨)**: host 側から `wsl.exe` 経由でサンドボックス側の
+- **`/sandbox-sync`(sync_from_sandbox.py・推奨)**: host 側から `wsl.exe` 経由でサンドボックス側の
   git 履歴を bundle として取得し、host 側リポジトリの `refs/remotes/sandbox/*`
   へ fetch する。origin リモートが無いローカル専用リポジトリでも使え、
   host の作業ツリー・現在のブランチには一切触れないため何度でも安全に
   再実行できる:
 
   ```
-  python sandbox/sync_from_sandbox.py             # カレントディレクトリ名の対応プロジェクトを取り込む
+  /sandbox-sync                                   # カレントディレクトリ名の対応プロジェクトを取り込む(Claude Code)
+  python sandbox/sync_from_sandbox.py             # スクリプト直接実行(Claude Code 以外)
   git log sandbox/<branch>                        # 取り込んだブランチを確認
   git merge sandbox/<branch>                       # 必要ならマージ
   ```
 
 - **git push**: origin リモート(GitHub 等)があるプロジェクトなら、
   ディストロ内から push し、ホスト側で pull してもよい
-- **逆コピー**: `python sandbox/open_in_sandbox.py --export <名前> <取り出し先>`
+- **逆コピー**: `/sandbox-open --export <名前> <取り出し先>` または
+  `python sandbox/open_in_sandbox.py --export <名前> <取り出し先>`
   (取り出し先ディレクトリは空である必要があり、git 管理外ファイルを含めた
   全体退避向け)
 - **エクスプローラー**: `\\wsl.localhost\agent-sandbox\home\agent\projects` を
@@ -153,22 +158,26 @@ wsl -d agent-sandbox -u root -- apt-get install -y <パッケージ>
 
 ### VS Code を閉じてしまった場合の再オープン
 
-搬入済みのプロジェクトへ繋ぎ直すだけなら再搬入は不要。以下のどちらかで開く:
+搬入済みのプロジェクトへ繋ぎ直すだけなら再搬入は不要:
 
 ```
-code --remote ssh-remote+agent-sandbox /home/agent/projects/<名前>
+/sandbox-reopen                                 # カレントディレクトリ名の対応プロジェクトを繋ぎ直す(Claude Code)
+python sandbox/reopen_in_sandbox.py             # スクリプト直接実行(Claude Code 以外)
 ```
 
-または `open_in_sandbox.py` を再実行してもよいが、既存コピーがある場合は
-「置き換えますか?」の確認が出る(`N`/Enter で中断すれば中身は消えない)。
-確認なしで開きたいだけなら上記の `code --remote` を直接使うほうが早い。
+内部では `code --remote ssh-remote+agent-sandbox /home/agent/projects/<名前>` を
+実行しているだけで、既存コピーの中身には一切触れない。
+
+`/sandbox-open`(`open_in_sandbox.py`)を再実行してもよいが、既存コピーがある
+場合は「置き換えますか?」の確認が出る(`N`/Enter で中断すれば中身は消えない)。
+確認なしで繋ぎ直したいだけなら上記の reopen 系を使うほうが早い。
 
 ディストロ自体が止まっている場合は先に `wsl -d agent-sandbox` で起こしておく
 (systemd 有効なので以後は動き続ける)。
 
 ## キット更新の反映(再搬入はしない)
 
-⚠️ open_in_sandbox.py の再搬入は既存プロジェクトを**丸ごと置き換える**
+⚠️ `/sandbox-open`(open_in_sandbox.py)の再搬入は既存プロジェクトを**丸ごと置き換える**
 (rm -rf + コピー)ため、知見記録キットの更新をディストロ内のコピーへ反映する
 手段に使わないこと。エージェントの未 push 作業が消える。更新はプロジェクト
 本体に触れない専用スクリプトで行う:
@@ -181,12 +190,16 @@ code --remote ssh-remote+agent-sandbox /home/agent/projects/<名前>
 無関係なプロジェクトをカレントの内容で上書きしてしまう):
 
 ```
-python sandbox/update_kit_in_sandbox.py             # カレントディレクトリ名の対応プロジェクトを更新
+/sandbox-update-kit                                 # カレントディレクトリ名の対応プロジェクトを更新(Claude Code)
+python sandbox/update_kit_in_sandbox.py             # スクリプト直接実行(Claude Code 以外)
 python sandbox/update_kit_in_sandbox.py --dry-run   # 反映せず内容だけ確認
 ```
 
 - 完全キット所有ファイル(sandbox/ 一式・.claude/commands/spec-doc.md・
-  .claude/commands/smart-commit.md・.claude/hooks/sandbox_guard.py)は
+  .claude/commands/smart-commit.md・.claude/commands/sandbox-open.md・
+  .claude/commands/sandbox-sync.md・.claude/commands/sandbox-update-kit.md・
+  .claude/commands/sandbox-reopen.md・.claude/commands/sandbox-setup.md・
+  .claude/hooks/sandbox_guard.py)は
   カレント側の内容で丸ごと上書きする
 - CLAUDE.md・AGENTS.md・docs/knowledge-kit-usage.md の知見記録キット管理区間
   (HTML コメントマーカー)はカレント側の内容で上書きするが、「ハマりポイント」
@@ -207,8 +220,8 @@ python sandbox/update_kit_in_sandbox.py --dry-run   # 反映せず内容だけ�
 - **WSL リモート拡張(`wsl+`)は分離設定と非互換**(automount 前提)。
   誤って「WSL: agent-sandbox で開く」を選ぶと
   「VS Code Server for WSL closed unexpectedly」で失敗する。Remote-SSH を使うこと。
-- **SSH 接続はディストロが起動していることが前提**。open_in_sandbox.py は起動まで
-  面倒を見るが、PC 再起動後に直接 Remote-SSH で繋ぐ場合は先に
+- **SSH 接続はディストロが起動していることが前提**。`/sandbox-open`(open_in_sandbox.py)は
+  起動まで面倒を見るが、PC 再起動後に直接 Remote-SSH で繋ぐ場合は先に
   `wsl -d agent-sandbox` で起こしておく(systemd 有効なので以後は動き続ける)。
 - **wsl.exe の出力は UTF-16LE**。スクリプトから叩くときは `WSL_UTF8=1` を付ける
   (本ディレクトリのスクリプトは対応済み)。
@@ -217,7 +230,7 @@ python sandbox/update_kit_in_sandbox.py --dry-run   # 反映せず内容だけ�
 - **Antigravity**: スタンドアロン CLI のインストール手順が未確認のため
   provision.sh はプレースホルダーのみ(手順判明後に追記)。VS Code 系 IDE の
   ため、IDE 側の WSL リモート接続で本ディストロに繋ぐ運用は可能。
-- **sync_from_sandbox.py は書き込み範囲が `refs/remotes/sandbox/*` に限られる**
+- **`/sandbox-sync`(sync_from_sandbox.py)は書き込み範囲が `refs/remotes/sandbox/*` に限られる**
   安全設計(host の作業ツリー・現在のブランチには触れない)。取り込んだ後の
   マージ・破棄は通常の git 操作として host 側で行うこと。
 
@@ -254,7 +267,7 @@ python sandbox/update_kit_in_sandbox.py --dry-run   # 反映せず内容だけ�
   エントリを削除する
 - **Windows 以外では何もしない**: Remote-SSH で正しく開いた場合はディストロ内の
   Claude Code がフックを実行するが、Linux 上なので即終了する(誤検知しない)
-- マーカー検知は provision 再実行(`python sandbox/setup_sandbox.py`)後に有効。
+- マーカー検知は provision 再実行(`/sandbox-setup`・`setup_sandbox.py`)後に有効。
   UNC / SSHFS パターン検知はそれ以前でも効く
 
 なお Codex CLI には同等のフック機構がないため、このガードは Claude Code のみ対象。
@@ -270,6 +283,7 @@ sandbox/
 ├── open_in_sandbox.py     ← プロジェクト搬入・取り出し(--export)+ VS Code 起動
 ├── update_kit_in_sandbox.py ← ディストロ内コピーへのキット更新(本体に触れない)
 ├── sync_from_sandbox.py   ← 成果物回収(git bundle fetch → refs/remotes/sandbox/*)
+├── reopen_in_sandbox.py   ← 搬入済みプロジェクトへ VS Code を繋ぎ直すだけ(再搬入なし)
 └── destroy_sandbox.py     ← ガード付き破棄(git 状態確認・退避・最終確認)
 ```
 
@@ -284,7 +298,8 @@ sandbox/
 ```
 python sandbox/destroy_sandbox.py                        # git 状態を確認してから破棄
 python sandbox/destroy_sandbox.py --export-first <退避先>  # 全プロジェクトを退避してから破棄
-python sandbox/setup_sandbox.py                          # 再作成(認証は再度必要)
+/sandbox-setup                                            # 再作成(Claude Code、認証は再度必要)
+python sandbox/setup_sandbox.py                           # スクリプト直接実行(Claude Code 以外)
 ```
 
 - 未コミット / 未 push / git 管理外のプロジェクトが1つでもあれば一覧を出して
@@ -297,5 +312,6 @@ python sandbox/setup_sandbox.py                          # 再作成(認証は�
 
 ```
 wsl -d agent-sandbox -- rm -rf /home/agent/projects/<名前>
-python sandbox/open_in_sandbox.py <プロジェクトのパス>    # 再搬入
+/sandbox-open <プロジェクトのパス>                        # 再搬入(Claude Code)
+python sandbox/open_in_sandbox.py <プロジェクトのパス>    # スクリプト直接実行(Claude Code 以外)
 ```
