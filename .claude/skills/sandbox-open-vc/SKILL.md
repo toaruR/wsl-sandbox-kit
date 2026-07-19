@@ -1,5 +1,5 @@
 ---
-name: sandbox-reopen
+name: sandbox-open-vc
 description: 搬入済みプロジェクトへ VS Code を繋ぎ直す(reopen_in_sandbox.py のラッパー)
 disable-model-invocation: true
 ---

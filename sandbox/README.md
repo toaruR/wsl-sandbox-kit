@@ -127,7 +127,7 @@ python sandbox/open_in_sandbox.py [プロジェクトのパス]     # スクリ�
 
 成果物の回収:
 
-- **`/sandbox-sync`(sync_from_sandbox.py・推奨)**: host 側から `wsl.exe` 経由でサンドボックス側の
+- **`/sandbox-sync`(sync_from_sandbox.py)**: host 側から `wsl.exe` 経由でサンドボックス側の
   git 履歴を bundle として取得し、host 側リポジトリの `refs/remotes/sandbox/*`
   へ fetch する。origin リモートが無いローカル専用リポジトリでも使え、
   host の作業ツリー・現在のブランチには一切触れないため何度でも安全に
@@ -161,7 +161,7 @@ wsl -d agent-sandbox -u root -- apt-get install -y <パッケージ>
 搬入済みのプロジェクトへ繋ぎ直すだけなら再搬入は不要:
 
 ```
-/sandbox-reopen                                 # カレントディレクトリ名の対応プロジェクトを繋ぎ直す(Claude Code)
+/sandbox-open-vc                                # カレントディレクトリ名の対応プロジェクトを繋ぎ直す(Claude Code)
 python sandbox/reopen_in_sandbox.py             # スクリプト直接実行(Claude Code 以外)
 ```
 
@@ -211,6 +211,36 @@ python sandbox/update_kit_in_sandbox.py --dry-run   # 反映せず内容だけ�
   内容に上書きすることもできる)
 - 更新結果はサンドボックス側コピーの未コミット差分として現れるので、
   エージェントの通常フロー(コミット → push)で回収する
+
+## プロジェクトを閉じる(1プロジェクトだけ削除)
+
+作業が終わったプロジェクトを、ディストロ全体は破棄せずに1つだけ片付けたい場合は
+`/sandbox-close`(`close_project_in_sandbox.py` のラッパー)を使う:
+
+```
+/sandbox-close                                          # カレントディレクトリ名の対応プロジェクトを閉じる(Claude Code)
+python sandbox/close_project_in_sandbox.py              # スクリプト直接実行(Claude Code 以外)
+```
+
+1. `/sandbox-sync`(sync_from_sandbox.py)と同じ経路で git 履歴を
+   `refs/remotes/sandbox/*` へ回収する(回収に失敗すると既定では中止する。
+   回収不要と分かっている場合のみ `--force` で続行)
+2. host 側の作業ツリーに未コミットの変更があれば警告する(この変更は
+   回収されず削除で失われる)
+3. 削除前にプロジェクト名の入力による最終確認がある(スクリプト実行時は `--yes`)
+4. `/home/agent/projects/<名前>` だけを削除する。ディストロ自体
+   (agent-sandbox)や他プロジェクトには一切触れない
+
+⚠️ 破壊的操作のため、エージェント経由(Claude Code の auto モード等)で
+実行する場合でも、Skill 側の指示により実行前に必ずチャット上でユーザーへの
+確認が入る(詳細は `skills-src/sandbox-close/SKILL.md` 参照)。
+
+対象がカレントプロジェクト1つに限られるため、他の `sandbox-*` Skill
+(sandbox-open・sandbox-sync 等)と同様に移植先プロジェクトへも配布される。
+一方 `destroy_sandbox.py`(ディストロ全体の破棄)はマシン共用のディストロ
+そのものを操作する破壊的なスクリプトのため、意図せず配布されて誤操作の
+入口が増えないよう、このキットリポジトリ自身の運用専用とし移植先へは
+配布しない。
 
 ## 注意点・ハマりポイント
 
@@ -284,7 +314,10 @@ sandbox/
 ├── update_kit_in_sandbox.py ← ディストロ内コピーへのキット更新(本体に触れない)
 ├── sync_from_sandbox.py   ← 成果物回収(git bundle fetch → refs/remotes/sandbox/*)
 ├── reopen_in_sandbox.py   ← 搬入済みプロジェクトへ VS Code を繋ぎ直すだけ(再搬入なし)
+├── close_project_in_sandbox.py ← sync してから1プロジェクトだけ削除(ガード付き)
 └── destroy_sandbox.py     ← ガード付き破棄(git 状態確認・退避・最終確認)
+                              ※ ディストロ全体を破棄する操作のため移植先には配布されない
+                                (キットリポジトリ自身の運用専用)
 ```
 
 (誤オープン検知フック本体はキット側 `.claude/hooks/sandbox_guard.py` にある)
@@ -308,7 +341,10 @@ python sandbox/setup_sandbox.py                           # スクリプト直�
 - 運用の原則: **ディストロは使い捨ての計算環境、永続化は git push のみ**。
   この原則を守っていれば破棄はいつでも安全
 
-**特定プロジェクトだけ壊れた・作り直したい場合は破棄不要**:
+**特定プロジェクトだけ壊れた・作り直したい・片付けたい場合は破棄不要**:
+成果物を回収してから安全に削除したいなら `/sandbox-close`
+(前述「プロジェクトを閉じる」参照)を使う。回収が不要で単に作り直すだけなら
+直接 `rm -rf` でもよい:
 
 ```
 wsl -d agent-sandbox -- rm -rf /home/agent/projects/<名前>
