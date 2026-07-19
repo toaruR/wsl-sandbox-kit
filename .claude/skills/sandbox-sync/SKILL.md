@@ -1,9 +1,11 @@
 ---
+name: sandbox-sync
 description: サンドボックス内プロジェクトの git 履歴を refs/remotes/sandbox/* へ取り込む(sync_from_sandbox.py のラッパー)
-argument-hint: [--name NAME] [--distro DISTRO]
+disable-model-invocation: true
 ---
 
-リポジトリルートで `python sandbox/sync_from_sandbox.py $ARGUMENTS` を実行してください。
+リポジトリルートで `python sandbox/sync_from_sandbox.py` を実行してください。
+ユーザーが会話中で `--name NAME` / `--distro DISTRO` を指定していれば、コマンドライン引数として渡す。
 
 ## 注意
 
