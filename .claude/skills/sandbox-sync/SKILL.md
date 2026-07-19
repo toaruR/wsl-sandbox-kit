@@ -4,7 +4,7 @@ description: サンドボックス内プロジェクトの git 履歴を refs/re
 disable-model-invocation: true
 ---
 
-リポジトリルートで `python sandbox/sync_from_sandbox.py` を実行してください。
+リポジトリルートで `python .sandbox-kit/sync_from_sandbox.py` を実行してください。
 ユーザーが会話中で `--name NAME` / `--distro DISTRO` を指定していれば、コマンドライン引数として渡す。
 
 ## 注意

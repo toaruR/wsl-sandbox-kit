@@ -54,4 +54,4 @@ def build_warning_message(cwd: str) -> str:
     return (f"警告: agent-sandbox 内のフォルダ ({cwd}) をホスト側で開いた状態で"
             "エージェントを起動しています。この状態ではエージェントがホスト Windows の"
             "権限で動き、サンドボックスの隔離が効きません。VS Code の Remote-SSH "
-            "(agent-sandbox) で開き直してください (sandbox/README.md 参照)。")
+            "(agent-sandbox) で開き直してください (.sandbox-kit/README.md 参照)。")

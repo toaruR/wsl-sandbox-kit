@@ -12,7 +12,7 @@ Windows ホスト経由で読まず tar ストリームをディストロ間で�
 (実行ビット・シンボリックリンクが Windows 経由だと壊れることがあるため)。
 
 成果物の回収は git push、または --export による逆方向コピーで行う
-(詳細: sandbox/README.md)。
+(詳細: .sandbox-kit/README.md)。
 
 使い方:
     python open_in_sandbox.py [プロジェクトのパス] [--name <名前>]
@@ -221,7 +221,7 @@ def main():
         if probe.returncode != 0:
             raise OpenError(
                 f"ディストロ {args.distro} にアクセスできません。"
-                "先に `python sandbox/setup_sandbox.py` を実行してください。")
+                "先に `python .sandbox-kit/setup_sandbox.py` を実行してください。")
 
         if args.export:
             if not args.project or not args.export_dest:

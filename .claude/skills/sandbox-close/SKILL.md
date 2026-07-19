@@ -4,7 +4,7 @@ description: サンドボックス内プロジェクトの成果物を回収し�
 disable-model-invocation: true
 ---
 
-リポジトリルートで `python sandbox/close_project_in_sandbox.py --yes` を実行してください。
+リポジトリルートで `python .sandbox-kit/close_project_in_sandbox.py --yes` を実行してください。
 ユーザーが会話中で `--name NAME` / `--distro DISTRO` / `--force` を指定していれば、コマンドライン引数として渡す。
 
 ## 注意

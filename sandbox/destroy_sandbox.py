@@ -4,7 +4,7 @@
 ディストロは全プロジェクト共有のため、素の `wsl --unregister` は確認なしで
 /home/agent/projects 配下すべての未 push 作業と認証状態を一緒に消してしまう。
 このスクリプトは破棄前に各プロジェクトの git 状態を検査し、失われる作業が
-あれば一覧を出して拒否する(sandbox/README.md 参照)。
+あれば一覧を出して拒否する(.sandbox-kit/README.md 参照)。
 
 - 未コミット / 未 push / git 管理外のプロジェクトがあると拒否する
   (push で回収してから再実行が推奨。--export-first で全プロジェクトを
@@ -132,7 +132,7 @@ def main():
         run_wsl(["--terminate", args.distro], check=False)
         run_wsl(["--unregister", args.distro])
         print(f"ディストロ {args.distro} を破棄しました(認証情報・環境も消えています)。")
-        print("再作成するには: python sandbox/setup_sandbox.py(認証は再度必要)")
+        print("再作成するには: python .sandbox-kit/setup_sandbox.py(認証は再度必要)")
         return 0
 
     except (SetupError, OpenError) as e:

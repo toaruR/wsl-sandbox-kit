@@ -13,7 +13,7 @@ sync_from_sandbox.py 自身と同じ理由で、コミットされていない�
 回収すること。
 
 使い方:
-    python sandbox/close_project_in_sandbox.py [--name <名前>] [--distro agent-sandbox]
+    python .sandbox-kit/close_project_in_sandbox.py [--name <名前>] [--distro agent-sandbox]
                                                [--yes] [--force]
     (--name 省略時はカレントディレクトリ名を使う。--yes は最終確認プロンプトを
      スキップする。--force は git 履歴の回収(sync)に失敗しても削除を続行する)
@@ -70,7 +70,7 @@ def main():
         if probe.returncode != 0:
             raise OpenError(
                 f"ディストロ {args.distro} にアクセスできません。"
-                "先に `python sandbox/setup_sandbox.py` を実行してください。")
+                "先に `python .sandbox-kit/setup_sandbox.py` を実行してください。")
 
         linux_dest = f"{PROJECTS_DIR}/{name}"
         exists = run_wsl(["-d", args.distro, "--", "test", "-d", linux_dest], check=False, capture=True)
@@ -95,7 +95,7 @@ def main():
 
         run_wsl(["-d", args.distro, "--", "rm", "-rf", linux_dest])
         print(f"{args.distro}:{linux_dest} を削除しました。")
-        print("再度使うには: python sandbox/open_in_sandbox.py <プロジェクトのパス>")
+        print("再度使うには: python .sandbox-kit/open_in_sandbox.py <プロジェクトのパス>")
         return 0
 
     except OpenError as e:

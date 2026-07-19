@@ -4,7 +4,7 @@ description: 搬入済みプロジェクトへ VS Code を繋ぎ直す(reopen_in
 disable-model-invocation: true
 ---
 
-リポジトリルートで `python sandbox/reopen_in_sandbox.py` を実行してください。
+リポジトリルートで `python .sandbox-kit/reopen_in_sandbox.py` を実行してください。
 ユーザーが会話中で `--name NAME` / `--distro DISTRO` を指定していれば、コマンドライン引数として渡す。
 
 ## 注意

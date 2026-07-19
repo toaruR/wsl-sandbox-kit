@@ -14,7 +14,7 @@ host 側の作業ツリー・現在のブランチには一切触れない
 再実行できる。
 
 使い方:
-    python sandbox/sync_from_sandbox.py [--name <名前>] [--distro agent-sandbox]
+    python .sandbox-kit/sync_from_sandbox.py [--name <名前>] [--distro agent-sandbox]
     (--name 省略時はカレントディレクトリ名を使う。取り込み先が
      refs/remotes/sandbox/* に限られるため、間違った名前を指定しても
      実害はない)
@@ -118,7 +118,7 @@ def main():
         if probe.returncode != 0:
             raise OpenError(
                 f"ディストロ {args.distro} にアクセスできません。"
-                "先に `python sandbox/setup_sandbox.py` を実行してください。")
+                "先に `python .sandbox-kit/setup_sandbox.py` を実行してください。")
 
         sync(name, args.distro)
         return 0

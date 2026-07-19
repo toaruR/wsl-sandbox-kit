@@ -4,7 +4,7 @@ description: プロジェクトをサンドボックスへ搬入して VS Code �
 disable-model-invocation: true
 ---
 
-リポジトリルートで `python sandbox/open_in_sandbox.py` を実行してください。
+リポジトリルートで `python .sandbox-kit/open_in_sandbox.py` を実行してください。
 ユーザーが会話中で `project` / `export_dest` や `--name NAME` / `--distro DISTRO` /
 `--force` / `--no-code` / `--export` を指定していれば、コマンドライン引数として渡す。
 

@@ -6,7 +6,7 @@ open_in_sandbox.py と違って再搬入(既存コピーの置き換え)は一�
 VS Code を閉じてしまった後に繋ぎ直したいだけのときに使う。
 
 使い方:
-    python sandbox/reopen_in_sandbox.py [--name <名前>] [--distro agent-sandbox]
+    python .sandbox-kit/reopen_in_sandbox.py [--name <名前>] [--distro agent-sandbox]
     (--name 省略時はカレントディレクトリ名を使う)
 """
 

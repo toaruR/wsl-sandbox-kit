@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """AI エージェント実行用の分離 WSL2 ディストロを作成・更新するスクリプト。
 
-ホスト保護の設計(詳細: sandbox/README.md):
+ホスト保護の設計(詳細: .sandbox-kit/README.md):
 - 専用ディストロを import で新規作成(既存の開発用 WSL とは別)
 - /etc/wsl.conf で interop(Windows exe 起動)を無効化。automount は
   \\wsl.localhost 共有(ホスト → ディストロのアクセス)のため有効にし、
@@ -231,8 +231,8 @@ def show_next_steps(distro: str):
      code --remote ssh-remote+{distro} /home/agent/projects
    初回接続後、リモート側に Claude Code 拡張をインストールする。
 3. プロジェクトの搬入は open_in_sandbox.py を使う:
-     python sandbox/open_in_sandbox.py <プロジェクトのパス>
-詳細: sandbox/README.md""")
+     python .sandbox-kit/open_in_sandbox.py <プロジェクトのパス>
+詳細: .sandbox-kit/README.md""")
 
 
 def main():

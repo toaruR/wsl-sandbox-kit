@@ -4,7 +4,7 @@ description: エージェント用の分離 WSL2 ディストロを作成・更�
 disable-model-invocation: true
 ---
 
-リポジトリルートで `python sandbox/setup_sandbox.py` を実行してください。
+リポジトリルートで `python .sandbox-kit/setup_sandbox.py` を実行してください。
 ユーザーが会話中で `--distro DISTRO` / `--install-dir PATH` / `--tarball ROOTFS.TAR.GZ` /
 `--dry-run` を指定していれば、コマンドライン引数として渡す。
 
