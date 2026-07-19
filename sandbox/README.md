@@ -11,6 +11,24 @@ AI エージェント(Claude Code / Codex CLI 等)を、ホスト Windows から
 `/sandbox-setup`(`setup_sandbox.py` のラッパー)を実行しても同じディストロに
 冪等に作用する。プロジェクトごとに別ディストロが作られるわけではない。
 
+## スキル早見表
+
+Claude Code・Codex CLI からは各操作を Skill(`/sandbox-*`)経由で呼ぶ。それ以外の
+環境では対応する `sandbox/*.py` を直接実行する。詳細な手順は各節を参照。
+
+| Skill | 対応スクリプト | 用途 |
+|---|---|---|
+| `/sandbox-setup` | `setup_sandbox.py` | 初回セットアップ(ディストロ作成〜provisionまで・冪等) |
+| `/sandbox-open` | `open_in_sandbox.py` | プロジェクトを tar 搬入して VS Code を起動(既存コピーがあれば置き換え確認) |
+| `/sandbox-open-vc` | `reopen_in_sandbox.py` | 搬入済みプロジェクトへ VS Code を繋ぎ直すだけ(再搬入なし) |
+| `/sandbox-update-kit` | `update_kit_in_sandbox.py` | 知見記録キットの更新をディストロ内コピーへ反映(プロジェクト本体には触れない) |
+| `/sandbox-sync` | `sync_from_sandbox.py` | ディストロ内 git 履歴を host の `refs/remotes/sandbox/*` へ取り込み(成果物回収) |
+| `/sandbox-close` | `close_project_in_sandbox.py` | sync してからカレントプロジェクトだけを削除(ガード付き) |
+| (Skill化なし) | `destroy_sandbox.py` | ディストロ全体をガード付き破棄。**移植先には配布されずキットリポジトリ自身の運用専用** |
+
+いずれのスクリプトも `--dry-run`・`--force`・`--yes` 等のオプションを持つものがあり、
+破壊的な操作(削除・破棄・置き換え)には確認プロンプトが入る。
+
 ## 全体像: キット / インストール先 / サンドボックスの関係
 
 **知見記録キットは1つ、インストール先プロジェクトは複数、サンドボックスは
@@ -299,6 +317,16 @@ python sandbox/close_project_in_sandbox.py              # スクリプト直接�
   Claude Code がフックを実行するが、Linux 上なので即終了する(誤検知しない)
 - マーカー検知は provision 再実行(`/sandbox-setup`・`setup_sandbox.py`)後に有効。
   UNC / SSHFS パターン検知はそれ以前でも効く
+
+⚠️ **サンドボックスが無いときはガードされない**: このフックは
+「サンドボックス搬入済みのプロジェクトを誤ってホスト側で開いた」ケースだけを
+検知するものであり、サンドボックスそのものをセットアップしていない・
+使っていない通常のプロジェクトフォルダでは `is_sandbox_path`(検知条件: 上記①〜③の
+いずれか)が常に False になり、フックは即 return して警告もブロックも一切発生しない。
+つまり「サンドボックス機能を使っていない環境」を保護する仕組みではなく、
+自動承認モードのエージェントに対する唯一の防御線はサンドボックス自体
+(隔離された WSL2 ディストロ)であり、このガードはその隔離を誤って迂回した
+場合の事後検知に過ぎない。
 
 なお Codex CLI には同等のフック機構がないため、このガードは Claude Code のみ対象。
 
