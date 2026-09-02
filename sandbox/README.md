@@ -357,10 +357,10 @@ python .sandbox-kit/close_project_in_sandbox.py         # スクリプト直接�
 一緒に失われる。破棄は必ずガード付きスクリプトで行うこと:
 
 ```
-python .sandbox-kit/destroy_sandbox.py                        # git 状態を確認してから破棄
-python .sandbox-kit/destroy_sandbox.py --export-first <退避先>  # 全プロジェクトを退避してから破棄
-/sandbox-setup                                                 # 再作成(Claude Code、認証は再度必要)
-python .sandbox-kit/setup_sandbox.py                           # スクリプト直接実行(Claude Code 以外)
+python sandbox-src/destroy_sandbox.py                        # git 状態を確認してから破棄(キットリポジトリ内で実行)
+python sandbox-src/destroy_sandbox.py --export-first <退避先>  # 全プロジェクトを退避してから破棄
+/sandbox-setup                                                # 再作成(Claude Code、認証は再度必要)
+python .sandbox-kit/setup_sandbox.py                          # スクリプト直接実行(Claude Code 以外)
 ```
 
 - 未コミット / 未 push / git 管理外のプロジェクトが1つでもあれば一覧を出して
