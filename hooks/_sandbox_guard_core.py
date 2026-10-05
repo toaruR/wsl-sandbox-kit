@@ -1,11 +1,12 @@
 """agent-sandbox 誤オープン検知の共有ロジック。
 
-Claude Code / Codex CLI 両アダプタ(sandbox_guard.py)から import される
-ツール非依存のコア。検知ロジックと警告文言のみを持ち、各ツール固有の
+Claude Code / Codex CLI / Cursor / Antigravity の各アダプタ(sandbox_guard.py)から
+import されるツール非依存のコア。検知ロジックと警告文言のみを持ち、各ツール固有の
 stdin/stdout 契約はアダプタ側に置く。
 
-知見記録キットの一部として .claude/hooks/ と .codex/hooks/ の両方に
-同一内容がコピー配置される(install_kit.py が管理)。
+install.py により、インストール先の各ツールのフックディレクトリ
+(.claude/hooks/・.codex/hooks/・.cursor/hooks/・.agents/hooks/)へ
+アダプタと同じディレクトリに同一内容がコピー配置される。
 """
 
 import ctypes
@@ -27,7 +28,15 @@ def mapped_drive_target(drive_letter: str) -> str:
     return ""
 
 
+def normalize_host_path(path: str) -> str:
+    """URI 風の "/d:/foo" 表記を "d:/foo" に直す(Cursor の workspace_roots 等で来うる形)。"""
+    if re.match(r"^/[A-Za-z]:", path or ""):
+        return path[1:]
+    return path or ""
+
+
 def is_sandbox_path(path: str) -> bool:
+    path = normalize_host_path(path)
     if not path:
         return False
     if re.match(r"\\\\wsl(\.localhost|\$)\\agent-sandbox(\\|$)", path, re.IGNORECASE):
@@ -50,8 +59,17 @@ def is_sandbox_path(path: str) -> bool:
         d = parent
 
 
+def find_sandbox_path(paths):
+    """paths のうちサンドボックス内と判定された最初のパスを返す。無ければ None。"""
+    for path in paths:
+        if isinstance(path, str) and is_sandbox_path(path):
+            return path
+    return None
+
+
 def build_warning_message(cwd: str) -> str:
     return (f"警告: agent-sandbox 内のフォルダ ({cwd}) をホスト側で開いた状態で"
             "エージェントを起動しています。この状態ではエージェントがホスト Windows の"
-            "権限で動き、サンドボックスの隔離が効きません。VS Code の Remote-SSH "
-            "(agent-sandbox) で開き直してください (.sandbox-kit/README.md 参照)。")
+            "権限で動き、サンドボックスの隔離が効きません。IDE(VS Code / Cursor / "
+            "Antigravity)の Remote-SSH (agent-sandbox) で開き直してください "
+            "(.sandbox-kit/README.md 参照)。")

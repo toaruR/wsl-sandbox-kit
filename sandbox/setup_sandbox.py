@@ -226,10 +226,10 @@ def show_next_steps(distro: str):
 1. 認証(interop 無効のためブラウザは自動で開かない。表示された URL を
    ホストのブラウザに手動で貼り付けること):
      wsl -d {distro}    (その後シェル内で)  claude   /   codex login
-2. VS Code から接続(Remote-SSH 拡張が必要。WSL リモート拡張は分離設定と
-   非互換のため使わない):
+2. IDE から接続(Remote-SSH 拡張が必要。WSL リモート拡張は分離設定と
+   非互換のため使わない。Cursor は cursor、Antigravity は antigravity-ide に読み替え):
      code --remote ssh-remote+{distro} /home/agent/projects
-   初回接続後、リモート側に Claude Code 拡張をインストールする。
+   初回接続後、必要ならリモート側にエージェントの拡張(Claude Code 等)をインストールする。
 3. プロジェクトの搬入は open_in_sandbox.py を使う:
      python .sandbox-kit/open_in_sandbox.py <プロジェクトのパス>
 詳細: .sandbox-kit/README.md""")

@@ -4,7 +4,11 @@
 ディストロは全プロジェクト共有のため、素の `wsl --unregister` は確認なしで
 /home/agent/projects 配下すべての未 push 作業と認証状態を一緒に消してしまう。
 このスクリプトは破棄前に各プロジェクトの git 状態を検査し、失われる作業が
-あれば一覧を出して拒否する(.sandbox-kit/README.md 参照)。
+あれば一覧を出して拒否する(sandbox/README.md 参照)。
+
+ディストロ全体を破棄する運用専用ツールのため install.py ではインストール先へ
+配布しない。agent-sandbox-kit リポジトリから直接実行し、操作スクリプトは
+同リポジトリの sandbox/ から import する。
 
 - 未コミット / 未 push / git 管理外のプロジェクトがあると拒否する
   (push で回収してから再実行が推奨。--export-first で全プロジェクトを
@@ -12,16 +16,18 @@
 - 実行前にディストロ名の入力による最終確認を行う(--yes でスキップ)
 
 使い方:
-    python destroy_sandbox.py [--distro agent-sandbox] [--force] [--yes]
-                              [--export-first <退避先ディレクトリ>]
+    python tools/destroy_sandbox.py [--distro agent-sandbox] [--force] [--yes]
+                                    [--export-first <退避先ディレクトリ>]
 """
 
 import argparse
 import sys
 from pathlib import Path
 
-from open_in_sandbox import OpenError, export_project
-from setup_sandbox import DEFAULT_DISTRO, SetupError, distro_exists, run_wsl, wsl_available
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "sandbox"))
+
+from open_in_sandbox import OpenError, export_project  # noqa: E402
+from setup_sandbox import DEFAULT_DISTRO, SetupError, distro_exists, run_wsl, wsl_available  # noqa: E402
 
 # ディストロ内で全プロジェクトの git 状態を1行ずつ「名前|状態」で出力する。
 # 状態: clean / nogit / uncommitted / unpushed:<件数>(複合はスペース区切り)

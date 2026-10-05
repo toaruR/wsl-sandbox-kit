@@ -2,16 +2,16 @@
 """agent-sandbox 誤オープン検知フック(Claude Code SessionStart / UserPromptSubmit 用)。
 
 サンドボックス(agent-sandbox WSL ディストロ)内のフォルダを、ホスト Windows 側の
-VS Code / Claude Code で直接開いてエージェントを使うと、エージェントがホスト権限で
+IDE / Claude Code で直接開いてエージェントを使うと、エージェントがホスト権限で
 動いてしまい隔離が無意味になる。このフックはその状態を検知して警告し、
 UserPromptSubmit ではプロンプト送信をブロックする。
 
 検知ロジック本体は同じディレクトリの _sandbox_guard_core.py にある
-(Codex CLI 用アダプタ .codex/hooks/sandbox_guard.py と共有)。
+(Codex CLI / Cursor / Antigravity 用アダプタと共有)。
 このファイルは Claude Code の stdin/stdout 契約に変換するだけの薄いアダプタ。
 
-知見記録キットの一部として、インストール先の .claude/hooks/ に配置され、
-同じプロジェクトの .claude/settings.json から呼ばれる(install_kit.py が登録)。
+install.py により、インストール先の .claude/hooks/ に配置され、
+同じプロジェクトの .claude/settings.json から呼ばれる。
 """
 
 import json

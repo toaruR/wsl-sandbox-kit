@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""プロジェクトをサンドボックス(分離 WSL2 ディストロ)へ搬入し、VS Code で開く。
+"""プロジェクトをサンドボックス(分離 WSL2 ディストロ)へ搬入し、IDE で開く。
 
 - プロジェクトを tar 化し、wsl.exe の stdin 経由でディストロ内
   /home/agent/projects/<名前> に展開する
 - node_modules / .venv / __pycache__ はコピーしない(ディストロ内で入れ直す)
-- コピー後、ホスト側から `code --remote ssh-remote+<distro>` で VS Code を起動する
-  (WSL リモート拡張は automount 前提で分離ディストロでは動かないため Remote-SSH)
+- コピー後、ホスト側から `<IDE> --remote ssh-remote+<distro>` で IDE を起動する
+  (WSL リモート拡張は automount 前提で分離ディストロでは動かないため Remote-SSH)。
+  IDE は --ide または環境変数 AGENT_SANDBOX_IDE で code / cursor / antigravity から選ぶ
 
 コピー元が別の WSL ディストロ上にある場合(例: `\\\\wsl.localhost\\Ubuntu\\home\\...`)は、
 Windows ホスト経由で読まず tar ストリームをディストロ間で直結する
@@ -17,6 +18,7 @@ Windows ホスト経由で読まず tar ストリームをディストロ間で�
 使い方:
     python open_in_sandbox.py [プロジェクトのパス] [--name <名前>]
                               [--distro agent-sandbox] [--force] [--no-code]
+                              [--ide code|cursor|antigravity]
                               (プロジェクトのパスを省略するとカレントディレクトリを使う。
                                \\\\wsl.localhost\\<別ディストロ>\\... 形式も指定可)
     python open_in_sandbox.py --export <名前> <取り出し先ディレクトリ>
@@ -35,6 +37,11 @@ from pathlib import Path, PurePosixPath
 DEFAULT_DISTRO = "agent-sandbox"
 COPY_EXCLUDE = {"node_modules", ".venv", "__pycache__"}
 PROJECTS_DIR = "/home/agent/projects"
+
+# --ide の選択肢 → ホスト側 CLI 名。いずれも VS Code 系で `--remote ssh-remote+<host>` を受け付け、
+# setup_sandbox.py が用意した ~/.ssh/config の Host エントリへ Remote-SSH 拡張で繋ぐ前提。
+IDE_COMMANDS = {"code": "code", "cursor": "cursor", "antigravity": "antigravity-ide"}
+DEFAULT_IDE = os.environ.get("AGENT_SANDBOX_IDE", "code")
 
 
 class OpenError(Exception):
@@ -102,7 +109,8 @@ def import_project(src: Path, name: str, distro: str, force: bool):
     if exists.returncode == 0:
         if not force:
             print(f"警告: 置き換えると {linux_dest} 内の未 push 作業はすべて失われます。\n"
-                  "      キット更新が目的なら update_kit_in_sandbox.py を使ってください。")
+                  "      先に sync_from_sandbox.py で git 履歴を回収するか、"
+                  "IDE を繋ぎ直すだけなら reopen_in_sandbox.py を使ってください。")
             answer = input(f"{linux_dest} は既に存在します。中身を置き換えますか? [y/N]: ")
             if answer.strip().lower() != "y":
                 print("中断しました(追記コピーはしません)。")
@@ -139,7 +147,8 @@ def import_project_from_wsl(src_distro: str, linux_src: str, name: str, distro: 
     if exists.returncode == 0:
         if not force:
             print(f"警告: 置き換えると {linux_dest} 内の未 push 作業はすべて失われます。\n"
-                  "      キット更新が目的なら update_kit_in_sandbox.py を使ってください。")
+                  "      先に sync_from_sandbox.py で git 履歴を回収するか、"
+                  "IDE を繋ぎ直すだけなら reopen_in_sandbox.py を使ってください。")
             answer = input(f"{linux_dest} は既に存在します。中身を置き換えますか? [y/N]: ")
             if answer.strip().lower() != "y":
                 print("中断しました(追記コピーはしません)。")
@@ -172,6 +181,18 @@ def import_project_from_wsl(src_distro: str, linux_src: str, name: str, distro: 
     return linux_dest
 
 
+def launch_ide(ide: str, distro: str, linux_dest: str):
+    """ホスト側の IDE を Remote-SSH でディストロ内の linux_dest に繋いで起動する。"""
+    if ide not in IDE_COMMANDS:
+        raise OpenError(f"未対応の IDE です: {ide}({' / '.join(IDE_COMMANDS)} から選んでください)")
+    command = IDE_COMMANDS[ide]
+    exe = shutil.which(command)
+    if not exe:
+        raise OpenError(f"{command} コマンドが見つかりません。{ide} の PATH 設定を確認してください。")
+    subprocess.run([exe, "--remote", f"ssh-remote+{distro}", linux_dest], check=True)
+    print(f"{ide} を起動しました(ssh-remote+{distro}:{linux_dest})")
+
+
 def export_project(name: str, dest_dir: Path, distro: str):
     """ディストロ内のプロジェクトを tar ストリームでホストへ取り出す。"""
     linux_src = f"{PROJECTS_DIR}/{name}"
@@ -193,7 +214,7 @@ def export_project(name: str, dest_dir: Path, distro: str):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="プロジェクトをサンドボックスへ搬入して VS Code で開く")
+    ap = argparse.ArgumentParser(description="プロジェクトをサンドボックスへ搬入して IDE で開く")
     ap.add_argument("project", nargs="?", default=None,
                     help="搬入するプロジェクトのパス(--export 時はディストロ内の名前)。"
                          "省略時はカレントディレクトリ。"
@@ -203,7 +224,9 @@ def main():
     ap.add_argument("--name", default=None, help="ディストロ内での名前(既定: ディレクトリ名)")
     ap.add_argument("--distro", default=DEFAULT_DISTRO, help=f"ディストロ名(既定: {DEFAULT_DISTRO})")
     ap.add_argument("--force", action="store_true", help="搬入先が既にあっても確認なしで置き換える")
-    ap.add_argument("--no-code", action="store_true", help="コピーのみ行い VS Code を起動しない")
+    ap.add_argument("--no-code", action="store_true", help="コピーのみ行い IDE を起動しない")
+    ap.add_argument("--ide", default=DEFAULT_IDE,
+                    help="起動する IDE: code / cursor / antigravity(既定: 環境変数 AGENT_SANDBOX_IDE、未設定なら code)")
     ap.add_argument("--export", action="store_true",
                     help="逆方向: ディストロ内のプロジェクトをホストへ取り出す")
     args = ap.parse_args()
@@ -254,16 +277,13 @@ def main():
             return 1
 
         if args.no_code:
-            print(f"VS Code で開くには: code --remote ssh-remote+{args.distro} {linux_dest}")
+            command = IDE_COMMANDS.get(args.ide, args.ide)
+            print(f"IDE で開くには: {command} --remote ssh-remote+{args.distro} {linux_dest}")
             return 0
 
         # WSL リモート(wsl+)は automount 前提で分離ディストロでは動かないため、
         # setup_sandbox.py が用意した Remote-SSH(~/.ssh/config の Host エントリ)で開く
-        code = shutil.which("code")
-        if not code:
-            raise OpenError("code コマンドが見つかりません。VS Code の PATH 設定を確認してください。")
-        subprocess.run([code, "--remote", f"ssh-remote+{args.distro}", linux_dest], check=True)
-        print(f"VS Code を起動しました(ssh-remote+{args.distro}:{linux_dest})")
+        launch_ide(args.ide, args.distro, linux_dest)
         return 0
 
     except OpenError as e:

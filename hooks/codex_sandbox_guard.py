@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """agent-sandbox 誤オープン検知フック(Codex CLI SessionStart / UserPromptSubmit 用)。
 
-.claude/hooks/sandbox_guard.py の Codex 版アダプタ。検知ロジック本体は
-同じディレクトリの _sandbox_guard_core.py にある(Claude Code 用アダプタと共有)。
+Claude Code 用アダプタ(claude_sandbox_guard.py)の Codex 版。検知ロジック本体は
+同じディレクトリの _sandbox_guard_core.py にある。
 
-Codex CLI の SessionStart / UserPromptSubmit フックは
-{continue, stopReason, systemMessage, suppressOutput} の出力契約を共有する
-(Claude Code の {decision:"block", ...} 形式ではない)。イベント種別は
-stdin payload の hook_event_name を優先し、無ければ .codex/config.toml の
-フック登録コマンドに付与する --event 引数で判定する
-(Codex 側の実際の stdin スキーマは未検証。実機確認は今後のフェーズで行う)。
+Codex CLI のフックは stdin に {session_id, cwd, hook_event_name, ...} を受け取り、
+UserPromptSubmit は {"decision": "block", "reason": ...} でプロンプトをブロックできる。
+systemMessage は UI へ警告として表示される(Codex 公式ドキュメント hooks による)。
+イベント種別は stdin payload の hook_event_name を優先し、無ければ
+.codex/hooks.json のフック登録コマンドに付与する --event 引数で判定する。
 
-知見記録キットの一部として、インストール先の .codex/hooks/ に配置され、
-同じプロジェクトの .codex/config.toml から呼ばれる(install_kit.py が登録)。
+install.py により、インストール先の .codex/hooks/ に配置され、
+同じプロジェクトの .codex/hooks.json から呼ばれる。プロジェクトのフックは
+.codex/ 層が trusted のときだけ読まれ、定義ごとに /hooks での承認が要る。
 """
 
 import argparse
@@ -42,7 +42,7 @@ def main():
 
     msg = build_warning_message(cwd)
     if event == "UserPromptSubmit":
-        out = {"continue": False, "stopReason": msg, "systemMessage": msg}
+        out = {"decision": "block", "reason": msg, "systemMessage": msg}
     else:
         out = {"systemMessage": msg}
     print(json.dumps(out))
