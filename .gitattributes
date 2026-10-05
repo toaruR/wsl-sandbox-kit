@@ -1,0 +1,3 @@
+# provision.sh などディストロ内で実行するファイルが CRLF になると動かないため、
+# 作業ツリーでも常に LF にそろえる。
+* text=auto eol=lf
