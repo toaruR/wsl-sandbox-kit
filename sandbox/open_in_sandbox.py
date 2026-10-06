@@ -182,6 +182,51 @@ def import_project_from_wsl(src_distro: str, linux_src: str, name: str, distro: 
     return linux_dest
 
 
+def _launch_ide_detached_win32(exe: str, args: list) -> bool:
+    """Windows で親プロセスの Job Object やプロセスツリー終了に巻き込まれないよう WMI 経由で起動する。
+
+    Antigravity などのエージェント環境では、コマンド終了時にジョブオブジェクト配下の
+    プロセスツリーが一括終了されるため、CLI ラッパー(cmd)から detached で起動された
+    IDE GUI プロセスが直後に道連れで kill されてしまう。
+    WMI (Win32_Process.Create) は WmiPrvSE 経由で独立プロセスとして起動するため
+    ジョブオブジェクトの終了に巻き込まれない。
+    """
+    import base64
+    escaped_args = " ".join(f'"{a}"' for a in args)
+    cmdline = f'cmd.exe /c ""{exe}" {escaped_args}"'
+
+    # 1. win32com があれば最速(同一プロセス内 COM 呼び出し)
+    try:
+        import win32com.client
+        wmi = win32com.client.GetObject("winmgmts:\\\\.\\root\\cimv2")
+        proc = wmi.Get("Win32_Process")
+        in_params = proc.Methods_("Create").InParameters.SpawnInstance_()
+        in_params.CommandLine = cmdline
+        out = proc.ExecMethod_("Create", in_params)
+        if out.ReturnValue == 0:
+            return True
+    except Exception:
+        pass
+
+    # 2. PowerShell の Invoke-CimMethod (すべての Windows 10/11 に標準搭載)
+    try:
+        ps_script = (
+            f"$args = @{{CommandLine = {repr(cmdline)}}}; "
+            "Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments $args"
+        )
+        encoded = base64.b64encode(ps_script.encode("utf-16le")).decode("ascii")
+        res = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+            capture_output=True, text=True, check=True
+        )
+        if res.returncode == 0:
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
 def launch_ide(ide: str, distro: str, linux_dest: str):
     """ホスト側の IDE を Remote-SSH でディストロ内の linux_dest に繋いで起動する。"""
     if ide not in IDE_COMMANDS:
@@ -194,7 +239,11 @@ def launch_ide(ide: str, distro: str, linux_dest: str):
     # 接続が切れる(Connection refused / closed by remote host)ため、起動前に更新しておく
     from setup_sandbox import ensure_ssh_config
     ensure_ssh_config(distro)
-    subprocess.run([exe, "--remote", f"ssh-remote+{distro}", linux_dest], check=True)
+    ide_args = ["--remote", f"ssh-remote+{distro}", linux_dest]
+    if sys.platform == "win32" and _launch_ide_detached_win32(exe, ide_args):
+        print(f"{ide} を起動しました(ssh-remote+{distro}:{linux_dest})")
+        return
+    subprocess.run([exe, *ide_args], check=True)
     print(f"{ide} を起動しました(ssh-remote+{distro}:{linux_dest})")
 
 
