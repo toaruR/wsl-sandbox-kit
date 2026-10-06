@@ -84,6 +84,8 @@ class InstallTest(unittest.TestCase):
         self.assertIn("--event PreInvocation", entry["PreInvocation"][0]["command"])
         self.assertEqual(entry["PreToolUse"][0]["matcher"], "*")
         self.assertIn("--event PreToolUse", entry["PreToolUse"][0]["hooks"][0]["command"])
+        # Windows では " が \" にエスケープされて渡るためクォートしない
+        self.assertNotIn('"', entry["PreInvocation"][0]["command"])
 
     def test_idempotent(self):
         install.install(self.target, ALL, dry_run=False)

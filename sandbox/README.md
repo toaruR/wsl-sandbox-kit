@@ -1,270 +1,281 @@
-# エージェント用サンドボックス(WSL2 専用ディストロ)
+# Agent sandbox (dedicated WSL2 distro)
 
-AI エージェント(Claude Code / Codex CLI / Cursor / Antigravity)を、ホスト Windows から
-分離した専用の WSL2 ディストロ内で動かすための一式。自動承認モードでエージェントを
-走らせても、被害がディストロ内に閉じることを目的とする。
+[日本語](README.ja.md)
 
-このディレクトリ(`.sandbox-kit/`)は agent-sandbox-kit の `install.py` によって
-複数のプロジェクトへコピーされる(キット所有・差分はキット版で上書き)。ただし
-操作対象の WSL2 ディストロ(`agent-sandbox`)は**マシンに1つの共用環境のまま**であり、
-どのプロジェクトのコピーから `/sandbox-setup`(`setup_sandbox.py` のラッパー)を
-実行しても同じディストロに冪等に作用する。プロジェクトごとに別ディストロが
-作られるわけではない。
+A set of tools for running AI agents (Claude Code / Codex CLI / Cursor / Antigravity)
+inside a dedicated WSL2 distro isolated from the Windows host. The goal is that even when
+an agent runs in auto-approve mode, any damage stays confined to the distro.
 
-## スキル早見表
+This directory (`.sandbox-kit/`) is copied into multiple projects by agent-sandbox-kit's
+`install.py` (kit-owned; differences are overwritten with the kit version). However, the
+WSL2 distro it operates on (`agent-sandbox`) remains **a single shared environment per
+machine**: running `/sandbox-setup` (a wrapper around `setup_sandbox.py`) from any
+project's copy acts idempotently on the same distro. A separate distro is not created
+per project.
 
-Claude Code・Codex CLI・Cursor・Antigravity からは各操作を Skill(`/sandbox-*`)経由で
-呼ぶ。それ以外の環境では対応する `.sandbox-kit/*.py` を直接実行する。詳細な手順は各節を参照。
+## Skill quick reference
 
-| Skill | 対応スクリプト | 用途 |
+From Claude Code, Codex CLI, Cursor, and Antigravity, each operation is invoked via a
+Skill (`/sandbox-*`). In other environments, run the corresponding `.sandbox-kit/*.py`
+directly. See each section for details.
+
+| Skill | Script | Purpose |
 |---|---|---|
-| `/sandbox-setup` | `setup_sandbox.py` | 初回セットアップ(ディストロ作成〜provisionまで・冪等) |
-| `/sandbox-open` | `open_in_sandbox.py` | プロジェクトを tar 搬入して IDE を起動(既存コピーがあれば置き換え確認) |
-| `/sandbox-open-vc` | `reopen_in_sandbox.py` | 搬入済みプロジェクトへ IDE を繋ぎ直すだけ(再搬入なし) |
-| `/sandbox-sync` | `sync_from_sandbox.py` | ディストロ内 git 履歴を host の `refs/remotes/sandbox/*` へ取り込み(成果物回収) |
-| `/sandbox-close` | `close_project_in_sandbox.py` | sync してからカレントプロジェクトだけを削除(ガード付き) |
-| (Skill化なし) | `tools/destroy_sandbox.py` | ディストロ全体をガード付き破棄。**インストール先には配布されず agent-sandbox-kit リポジトリから実行する** |
+| `/sandbox-setup` | `setup_sandbox.py` | First-time setup (distro creation through provisioning; idempotent) |
+| `/sandbox-open` | `open_in_sandbox.py` | Copy the project in via tar and launch the IDE (asks before replacing an existing copy) |
+| `/sandbox-open-vc` | `reopen_in_sandbox.py` | Just reconnect the IDE to an already copied-in project (no re-copy) |
+| `/sandbox-sync` | `sync_from_sandbox.py` | Fetch git history from the distro into the host's `refs/remotes/sandbox/*` (retrieve work) |
+| `/sandbox-close` | `close_project_in_sandbox.py` | Sync, then remove only the current project (guarded) |
+| (no Skill) | `tools/destroy_sandbox.py` | Guarded destruction of the whole distro. **Not distributed to target projects; run from the agent-sandbox-kit repository** |
 
-いずれのスクリプトも `--dry-run`・`--force`・`--yes` 等のオプションを持つものがあり、
-破壊的な操作(削除・破棄・置き換え)には確認プロンプトが入る。
+Several scripts accept options such as `--dry-run`, `--force`, and `--yes`, and
+destructive operations (removal, destruction, replacement) prompt for confirmation.
 
-## 全体像: キット / インストール先 / サンドボックスの関係
+## Overview: kit / target projects / sandbox
 
-**agent-sandbox-kit は1つ、インストール先プロジェクトは複数、サンドボックスは
-マシンに1つ**という非対称な関係になっている(サンドボックス内では
-プロジェクトごとにサブディレクトリが分かれる)。
+The relationship is asymmetric: **one agent-sandbox-kit, many target projects, and one
+sandbox per machine** (inside the sandbox, each project gets its own subdirectory).
 
 ```mermaid
 flowchart TB
-    Kit["agent-sandbox-kit (1つ)<br/>sandbox/・hooks/・skills"]
+    Kit["agent-sandbox-kit (one)<br/>sandbox/, hooks/, skills"]
 
-    subgraph Host["ホスト Windows"]
-        ProjA["インストール先 A<br/>.sandbox-kit/*.py・各クライアントの hooks/sandbox_guard.py"]
-        ProjB["インストール先 B<br/>.sandbox-kit/*.py・各クライアントの hooks/sandbox_guard.py"]
+    subgraph Host["Windows host"]
+        ProjA["Target project A<br/>.sandbox-kit/*.py, each client's hooks/sandbox_guard.py"]
+        ProjB["Target project B<br/>.sandbox-kit/*.py, each client's hooks/sandbox_guard.py"]
     end
 
-    subgraph WSL["agent-sandbox (WSL2ディストロ)<br/>マシンに1つ・全プロジェクト共用"]
+    subgraph WSL["agent-sandbox (WSL2 distro)<br/>one per machine, shared by all projects"]
         SA["/home/agent/projects/A"]
         SB["/home/agent/projects/B"]
     end
 
-    Kit -->|"install.py<br/>(キット所有・差分は上書き)"| ProjA
-    Kit -->|同上| ProjB
-    ProjA -->|"/sandbox-open・open_in_sandbox.py<br/>(tar搬入・置き換え)"| SA
-    ProjB -->|"/sandbox-open・open_in_sandbox.py<br/>(tar搬入・置き換え)"| SB
-    SA -.->|"/sandbox-sync・sync_from_sandbox.py<br/>(git bundle fetch, refs/remotes/sandbox/*)"| ProjA
+    Kit -->|"install.py<br/>(kit-owned, differences overwritten)"| ProjA
+    Kit -->|same| ProjB
+    ProjA -->|"/sandbox-open, open_in_sandbox.py<br/>(tar copy-in, replace)"| SA
+    ProjB -->|"/sandbox-open, open_in_sandbox.py<br/>(tar copy-in, replace)"| SB
+    SA -.->|"/sandbox-sync, sync_from_sandbox.py<br/>(git bundle fetch, refs/remotes/sandbox/*)"| ProjA
 ```
 
-- **キット → インストール先**: `install.py` で複数プロジェクトにコピーされる。
-  キット所有ファイル(本ディレクトリ一式・Skill・フック)は差分があれば
-  キット側の内容で上書きされる。
-- **インストール先 → サンドボックス**: `/sandbox-open`(`open_in_sandbox.py` の
-  ラッパー)でプロジェクトをディストロ内 `/home/agent/projects/<名前>` へ tar 搬入
-  する。**どのインストール先から実行しても同じ1つのディストロに作用する**
-  (プロジェクトごとに別ディストロが作られるわけではない)。
-- **サンドボックス → インストール先**: `/sandbox-sync`(`sync_from_sandbox.py` の
-  ラッパー)でサンドボックス側プロジェクトの git 履歴を host 側リポジトリの
-  `refs/remotes/sandbox/*` へ取り込む(下記「成果物の回収」参照)。
+- **Kit → target projects**: copied into multiple projects by `install.py`. Kit-owned
+  files (this directory, Skills, hooks) are overwritten with the kit's version whenever
+  they differ.
+- **Target project → sandbox**: `/sandbox-open` (a wrapper around `open_in_sandbox.py`)
+  copies the project via tar into `/home/agent/projects/<name>` inside the distro.
+  **Whichever target project you run it from, it acts on the same single distro**
+  (a separate distro is not created per project).
+- **Sandbox → target project**: `/sandbox-sync` (a wrapper around `sync_from_sandbox.py`)
+  fetches the sandbox-side project's git history into the host repository's
+  `refs/remotes/sandbox/*` (see "Retrieving work" below).
 
-## 方式と分離の範囲
+## Approach and scope of isolation
 
-IDE の UI はホスト(Windows ネイティブ)のまま、**Remote-SSH 接続**
-(localhost:2222 → ディストロ内 sshd)で分離ディストロ内のプロジェクトを開く。
-エージェント・シェル・ツールはすべてディストロ内で動く。
+The IDE UI stays on the host (native Windows) and opens the project in the isolated
+distro over a **Remote-SSH connection** (ProxyCommand via wsl.exe → sshd on localhost:2222
+inside the distro).
+Agents, shells, and tools all run inside the distro.
 
-⚠️ VS Code 系 IDE の **WSL リモート拡張(`wsl+`)は使えない**: あの拡張は Windows 側の
-拡張ディレクトリやサーバー tarball を `/mnt/c`(automount)経由で読む前提で
-動くため、ホストドライブを unmount する分離ディストロでは必ず失敗する
-(`Failed to translate 'c:\...'` → `wslServer.sh: not found`)。
-このため接続は Remote-SSH で行う。鍵と `~/.ssh/config` の `Host agent-sandbox`
-エントリは setup_sandbox.py が自動で用意する。
+⚠️ The **WSL remote extension (`wsl+`) of VS Code-based IDEs cannot be used**: it assumes
+it can read the Windows-side extension directory and server tarball through `/mnt/c`
+(automount), so it always fails in an isolated distro that unmounts the host drives
+(`Failed to translate 'c:\...'` → `wslServer.sh: not found`).
+Connections therefore use Remote-SSH. setup_sandbox.py automatically prepares the key
+and the `Host agent-sandbox` entry in `~/.ssh/config`.
 
-| 項目 | 状態 |
+| Item | Status |
 |---|---|
-| ホストのドライブ (C:/D:) | **見えない**(automount 自体は有効だが、systemd ユニットが毎 boot 全ホストドライブを unmount) |
-| Windows 実行ファイルの起動 | **できない**(`interop` 無効) |
-| sudo / root | **エージェントには与えない**(sudo があると drvfs でホストドライブを再マウントでき分離が破れる) |
-| `\\wsl.localhost` 共有 | **使える**(ホスト → ディストロ方向のみ。誤ってこのパスをホスト側のエージェントで開くと sandbox_guard が警告・ブロック) |
-| ネットワーク | **制限なし**(API 呼び出し・npm install 等は素通し) |
-| 二層目の防御 | Linux 上なので Claude Code / Codex 内蔵サンドボックスも有効化可 |
+| Host drives (C:/D:) | **Not visible** (automount itself is enabled, but a systemd unit unmounts all host drives on every boot) |
+| Launching Windows executables | **Not possible** (`interop` disabled) |
+| sudo / root | **Not given to agents** (with sudo, host drives could be remounted via drvfs, breaking isolation) |
+| `\\wsl.localhost` share | **Available** (host → distro direction only. If an agent on the host side accidentally opens this path, sandbox_guard warns/blocks) |
+| Network | **Unrestricted** (API calls, npm install, etc. pass through) |
+| Second layer of defense | Since this is Linux, Claude Code / Codex built-in sandboxes can also be enabled |
 
-**限界**:
+**Limitations**:
 
-- ネットワークは全許可のため、認証情報をディストロ内に置く以上、その権限で
-  できること(git push 等)はエージェントにもできる。渡すトークンは必要最小限
-  の権限にすること。
-- WSL2 の全ディストロは**1つの VM・カーネルを共有**している。カーネルレベルの
-  脆弱性に対する強固な境界(Hyper-V VM 分離ほど)ではない。日常の暴走・誤操作
-  対策と割り切ること。
-- `\\wsl.localhost` 共有を担う plan9 サーバーは automount 設定に連動して起動する
-  ため、automount は有効にしてあり、ホストドライブは boot 時の systemd ユニット
-  (`sandbox-umount-host-drives`)で unmount している。boot 直後のごく短い間だけ
-  ドライブがマウントされた状態が存在する(sshd より先に unmount が走るよう順序付け
-  済み。上記「日常の暴走・誤操作対策」の範囲)。
+- The network is fully open, so as long as credentials live in the distro, anything
+  those credentials permit (git push, etc.) is also possible for the agent. Give tokens
+  only the minimum necessary permissions.
+- All WSL2 distros **share a single VM and kernel**. This is not a strong boundary
+  against kernel-level vulnerabilities (not as strong as Hyper-V VM isolation). Treat it
+  as protection against everyday runaway behavior and mistakes.
+- The plan9 server backing the `\\wsl.localhost` share starts in tandem with the
+  automount setting, so automount is left enabled and the host drives are unmounted by a
+  systemd unit at boot (`sandbox-umount-host-drives`). For a very short time right after
+  boot, the drives are mounted (ordering ensures the unmount runs before sshd; this is
+  within the "everyday runaway behavior and mistakes" scope above).
 
-## セットアップ(初回のみ)
+## Setup (first time only)
 
 ```
-/sandbox-setup                              # Skill 経由
-python .sandbox-kit/setup_sandbox.py        # スクリプト直接実行
+/sandbox-setup                              # via Skill
+python .sandbox-kit/setup_sandbox.py        # run the script directly
 ```
 
-Ubuntu 24.04 rootfs のダウンロード → `agent-sandbox` ディストロの import →
-分離設定(wsl.conf)→ provision(agent ユーザー / Node.js / claude / codex)まで
-自動で行う。再実行すると設定と provision だけ再適用される(冪等)。
+Automatically downloads the Ubuntu 24.04 rootfs → imports the `agent-sandbox` distro →
+applies isolation settings (wsl.conf) → provisions (agent user / Node.js / claude /
+codex). Re-running only reapplies the settings and provisioning (idempotent).
 
-続けて認証を行う:
+Then authenticate:
 
 ```
 wsl -d agent-sandbox
-$ claude          # 表示された URL をホストのブラウザに手動で貼る
-$ codex login     # 同上
+$ claude          # paste the displayed URL into a browser on the host manually
+$ codex login     # same
 ```
 
-⚠️ interop 無効のためブラウザは自動で開かない。URL の手動コピーで進めること。
+⚠️ With interop disabled, the browser does not open automatically. Copy the URL manually.
 
-## 日常の使い方
+## Daily use
 
 ```
-/sandbox-open [プロジェクトのパス]                        # 省略時はカレントディレクトリ(Skill 経由)
-python .sandbox-kit/open_in_sandbox.py [プロジェクトのパス] # スクリプト直接実行
+/sandbox-open [project path]                        # defaults to the current directory (via Skill)
+python .sandbox-kit/open_in_sandbox.py [project path] # run the script directly
 ```
 
-1. プロジェクトが tar ストリーム経由でディストロ内
-   `/home/agent/projects/<名前>` にコピーされる
-   (`node_modules`・`.venv`・`__pycache__` は除外)
-2. IDE が `ssh-remote+agent-sandbox` リモートで起動する
-   (**Remote-SSH 拡張**が必要)
-3. 初回は必要に応じてリモート側にエージェントの拡張(Claude Code 等)をインストールする
-   (拡張ビューで「Install in SSH: agent-sandbox」)
+1. The project is copied via a tar stream into
+   `/home/agent/projects/<name>` inside the distro
+   (`node_modules`, `.venv`, and `__pycache__` are excluded)
+2. The IDE launches with the `ssh-remote+agent-sandbox` remote
+   (requires a **Remote-SSH extension**)
+3. On first use, install the agent extension (Claude Code, etc.) on the remote side as
+   needed ("Install in SSH: agent-sandbox" in the Extensions view)
 
-### IDE の選択
+### Choosing the IDE
 
-起動する IDE は `--ide` または環境変数 `AGENT_SANDBOX_IDE` で選ぶ(既定は `code`)。
+Choose the IDE with `--ide` or the `AGENT_SANDBOX_IDE` environment variable
+(default: `code`).
 
-| `--ide` | 起動コマンド | IDE |
+| `--ide` | Launch command | IDE |
 |---|---|---|
 | `code` | `code` | VS Code |
 | `cursor` | `cursor` | Cursor |
-| `antigravity` | `antigravity-ide` | Antigravity |
+| `antigravity` (alias `agy`) | `antigravity-ide` | Antigravity |
 
 ```
 python .sandbox-kit/open_in_sandbox.py --ide cursor
-setx AGENT_SANDBOX_IDE cursor        # 毎回指定しない場合(新しいシェルから有効)
+setx AGENT_SANDBOX_IDE cursor        # to avoid specifying it every time (takes effect in new shells)
 ```
 
-いずれも `<コマンド> --remote ssh-remote+agent-sandbox <パス>` で起動する。
-各 IDE に Remote-SSH 相当の拡張が入っていることが前提。
+All are launched as `<command> --remote ssh-remote+agent-sandbox <path>`.
+Each IDE must have a Remote-SSH-equivalent extension installed.
 
-### 成果物の回収
+### Retrieving work
 
-- **`/sandbox-sync`(sync_from_sandbox.py)**: host 側から `wsl.exe` 経由でサンドボックス側の
-  git 履歴を bundle として取得し、host 側リポジトリの `refs/remotes/sandbox/*`
-  へ fetch する。origin リモートが無いローカル専用リポジトリでも使え、
-  host の作業ツリー・現在のブランチには一切触れないため何度でも安全に
-  再実行できる:
+- **`/sandbox-sync` (sync_from_sandbox.py)**: from the host, retrieves the sandbox-side
+  git history as a bundle via `wsl.exe` and fetches it into the host repository's
+  `refs/remotes/sandbox/*`. Works even for local-only repositories without an origin
+  remote, and never touches the host's working tree or current branch, so it is safe to
+  re-run any number of times:
 
   ```
-  /sandbox-sync                                   # カレントディレクトリ名の対応プロジェクトを取り込む(Skill 経由)
-  python .sandbox-kit/sync_from_sandbox.py        # スクリプト直接実行
-  git log sandbox/<branch>                        # 取り込んだブランチを確認
-  git merge sandbox/<branch>                       # 必要ならマージ
+  /sandbox-sync                                   # fetch the project matching the current directory name (via Skill)
+  python .sandbox-kit/sync_from_sandbox.py        # run the script directly
+  git log sandbox/<branch>                        # inspect the fetched branch
+  git merge sandbox/<branch>                       # merge if needed
   ```
 
-- **git push**: origin リモート(GitHub 等)があるプロジェクトなら、
-  ディストロ内から push し、ホスト側で pull してもよい
-- **逆コピー**: `/sandbox-open --export <名前> <取り出し先>` または
-  `python .sandbox-kit/open_in_sandbox.py --export <名前> <取り出し先>`
-  (取り出し先ディレクトリは空である必要があり、git 管理外ファイルを含めた
-  全体退避向け)
-- **エクスプローラー**: `\\wsl.localhost\agent-sandbox\home\agent\projects` を
-  ホストから直接参照できる(閲覧・個別ファイルの取り出し向け。この UNC パスを
-  ホスト側のエージェントで開くと sandbox_guard が警告・ブロックする)
+- **git push**: for projects with an origin remote (GitHub, etc.), you can also push from
+  inside the distro and pull on the host
+- **Reverse copy**: `/sandbox-open --export <name> <dest>` or
+  `python .sandbox-kit/open_in_sandbox.py --export <name> <dest>`
+  (the destination directory must be empty; intended for backing up everything,
+  including files outside git)
+- **Explorer**: `\\wsl.localhost\agent-sandbox\home\agent\projects` can be browsed
+  directly from the host (for viewing and pulling out individual files. Opening this UNC
+  path with an agent on the host side triggers sandbox_guard's warning/block)
 
-パッケージの追加(エージェントに sudo は無い)はホスト側から行う:
-
-```
-wsl -d agent-sandbox -u root -- apt-get install -y <パッケージ>
-```
-
-### IDE を閉じてしまった場合の再オープン
-
-搬入済みのプロジェクトへ繋ぎ直すだけなら再搬入は不要:
+Install packages from the host side (agents have no sudo):
 
 ```
-/sandbox-open-vc                                # カレントディレクトリ名の対応プロジェクトを繋ぎ直す(Skill 経由)
-python .sandbox-kit/reopen_in_sandbox.py        # スクリプト直接実行(--ide も指定可)
+wsl -d agent-sandbox -u root -- apt-get install -y <package>
 ```
 
-内部では `<IDE> --remote ssh-remote+agent-sandbox /home/agent/projects/<名前>` を
-実行しているだけで、既存コピーの中身には一切触れない。
+### Reopening after closing the IDE
 
-`/sandbox-open`(`open_in_sandbox.py`)を再実行してもよいが、既存コピーがある
-場合は「置き換えますか?」の確認が出る(`N`/Enter で中断すれば中身は消えない)。
-確認なしで繋ぎ直したいだけなら上記の reopen 系を使うほうが早い。
-
-⚠️ 再搬入は既存コピーを**丸ごと置き換える**(rm -rf + コピー)ため、
-ディストロ内の未 push 作業が消える。置き換える前に `/sandbox-sync` で回収すること。
-
-ディストロ自体が止まっている場合は先に `wsl -d agent-sandbox` で起こしておく
-(systemd 有効なので以後は動き続ける)。
-
-## プロジェクトを閉じる(1プロジェクトだけ削除)
-
-作業が終わったプロジェクトを、ディストロ全体は破棄せずに1つだけ片付けたい場合は
-`/sandbox-close`(`close_project_in_sandbox.py` のラッパー)を使う:
+To just reconnect to an already copied-in project, no re-copy is needed:
 
 ```
-/sandbox-close                                          # カレントディレクトリ名の対応プロジェクトを閉じる(Skill 経由)
-python .sandbox-kit/close_project_in_sandbox.py         # スクリプト直接実行
+/sandbox-open-vc                                # reconnect to the project matching the current directory name (via Skill)
+python .sandbox-kit/reopen_in_sandbox.py        # run the script directly (--ide also accepted)
 ```
 
-1. `/sandbox-sync`(sync_from_sandbox.py)と同じ経路で git 履歴を
-   `refs/remotes/sandbox/*` へ回収する(回収に失敗すると既定では中止する。
-   回収不要と分かっている場合のみ `--force` で続行)
-2. host 側の作業ツリーに未コミットの変更があれば警告する(この変更は
-   回収されず削除で失われる)
-3. 削除前にプロジェクト名の入力による最終確認がある(スクリプト実行時は `--yes`)
-4. `/home/agent/projects/<名前>` だけを削除する。ディストロ自体
-   (agent-sandbox)や他プロジェクトには一切触れない
+Internally this just runs `<IDE> --remote ssh-remote+agent-sandbox /home/agent/projects/<name>`
+and never touches the contents of the existing copy.
 
-⚠️ 破壊的操作のため、エージェント経由(auto モード等)で実行する場合でも、
-Skill 側の指示により実行前に必ずチャット上でユーザーへの確認が入る
-(詳細は `sandbox-close` の SKILL.md 参照)。
+You can also re-run `/sandbox-open` (`open_in_sandbox.py`), but if a copy already exists
+it asks "Replace?" (aborting with `N`/Enter leaves the contents intact). If you only
+want to reconnect without the prompt, the reopen commands above are quicker.
 
-対象がカレントプロジェクト1つに限られるため、他の `sandbox-*` Skill
-(sandbox-open・sandbox-sync 等)と同様にインストール先プロジェクトへも配布される。
-一方 `tools/destroy_sandbox.py`(ディストロ全体の破棄)はマシン共用のディストロ
-そのものを操作する破壊的なスクリプトのため、意図せず配布されて誤操作の
-入口が増えないよう、agent-sandbox-kit リポジトリからのみ実行する。
+⚠️ Re-copying **replaces the existing copy entirely** (rm -rf + copy), so unpushed work
+inside the distro is lost. Retrieve it with `/sandbox-sync` before replacing.
 
-## 注意点・ハマりポイント
+If the distro itself is stopped, wake it first with `wsl -d agent-sandbox`
+(systemd is enabled, so it keeps running afterward).
 
-- **ディストロ内から `code .` は使えない**(interop 無効)。IDE への接続は
-  必ずホスト側から行う(`code --remote ssh-remote+agent-sandbox <パス>` または
-  Remote Explorer の SSH ターゲット)。
-- **WSL リモート拡張(`wsl+`)は分離設定と非互換**(automount 前提)。
-  誤って「WSL: agent-sandbox で開く」を選ぶと
-  「VS Code Server for WSL closed unexpectedly」で失敗する。Remote-SSH を使うこと。
-- **SSH 接続はディストロが起動していることが前提**。`/sandbox-open`(open_in_sandbox.py)は
-  起動まで面倒を見るが、PC 再起動後に直接 Remote-SSH で繋ぐ場合は先に
-  `wsl -d agent-sandbox` で起こしておく(systemd 有効なので以後は動き続ける)。
-- **wsl.exe の出力は UTF-16LE**。スクリプトから叩くときは `WSL_UTF8=1` を付ける
-  (本ディレクトリのスクリプトは対応済み)。
-- **改行コード**: Windows からコピーしたファイルは CRLF のまま。気になる場合は
-  ディストロ内で `git config core.autocrlf input` を設定する。
-- **Antigravity**: スタンドアロン CLI のインストール手順が未確認のため
-  provision.sh はプレースホルダーのみ(手順判明後に追記)。VS Code 系 IDE の
-  ため、IDE 側の Remote-SSH 接続で本ディストロに繋ぐ運用は可能。
-- **`/sandbox-sync`(sync_from_sandbox.py)は書き込み範囲が `refs/remotes/sandbox/*` に限られる**
-  安全設計(host の作業ツリー・現在のブランチには触れない)。取り込んだ後の
-  マージ・破棄は通常の git 操作として host 側で行うこと。
+## Closing a project (removing just one project)
 
-## 二層目: Claude Code 内蔵サンドボックスの併用
+To clean up a single finished project without destroying the whole distro, use
+`/sandbox-close` (a wrapper around `close_project_in_sandbox.py`):
 
-ディストロは Linux なので、Claude Code の OS レベルサンドボックス
-(bubblewrap ベース)が使える。ディストロ内プロジェクトの
-`.claude/settings.json` に以下を足すと、Bash 実行がさらに閉じ込められる:
+```
+/sandbox-close                                          # close the project matching the current directory name (via Skill)
+python .sandbox-kit/close_project_in_sandbox.py         # run the script directly
+```
+
+1. Retrieves git history into `refs/remotes/sandbox/*` via the same path as
+   `/sandbox-sync` (sync_from_sandbox.py) (by default, aborts if retrieval fails;
+   continue with `--force` only when you know retrieval is unnecessary)
+2. Warns if the host-side working tree has uncommitted changes (these changes are not
+   retrieved and are lost on removal)
+3. Asks for final confirmation by typing the project name before removal (`--yes` when
+   running the script)
+4. Removes only `/home/agent/projects/<name>`. Never touches the distro itself
+   (agent-sandbox) or other projects
+
+⚠️ Because this is destructive, even when run through an agent (auto mode, etc.), the
+Skill's instructions require confirming with the user in chat before execution
+(see `sandbox-close`'s SKILL.md for details).
+
+Since its target is limited to the current project, it is distributed to target
+projects like the other `sandbox-*` Skills (sandbox-open, sandbox-sync, etc.).
+By contrast, `tools/destroy_sandbox.py` (destroying the whole distro) is a destructive
+script that operates on the machine-wide shared distro itself, so it is run only from
+the agent-sandbox-kit repository to avoid unintentionally distributing it and adding
+more entry points for mistakes.
+
+## Caveats and pitfalls
+
+- **`code .` cannot be used from inside the distro** (interop disabled). Always connect
+  the IDE from the host side (`code --remote ssh-remote+agent-sandbox <path>` or the SSH
+  target in Remote Explorer).
+- **The WSL remote extension (`wsl+`) is incompatible with the isolation settings**
+  (it assumes automount). Accidentally choosing "Open in WSL: agent-sandbox" fails with
+  "VS Code Server for WSL closed unexpectedly". Use Remote-SSH.
+- **WSL stops the distro about 15 seconds after its last client (wsl.exe) exits**
+  (even with systemd enabled; sshd stops with it). The `~/.ssh/config` entry therefore
+  connects through `ProxyCommand wsl.exe -d agent-sandbox ... nc localhost 2222` instead of
+  going to localhost:2222 directly. Each connection starts the distro, and it stays up
+  while connected. Entries created by older versions of setup_sandbox.py (without
+  ProxyCommand) fail with `Connection refused`, or with `closed by remote host` mid-connection,
+  once the distro stops. open_in_sandbox.py / reopen_in_sandbox.py (and setup_sandbox.py)
+  append the ProxyCommand automatically before launching the IDE.
+- **wsl.exe output is UTF-16LE**. Set `WSL_UTF8=1` when calling it from scripts
+  (the scripts in this directory already do).
+- **Line endings**: files copied from Windows keep CRLF. If that matters, set
+  `git config core.autocrlf input` inside the distro.
+- **Antigravity**: installation steps for a standalone CLI are unconfirmed, so
+  provision.sh contains only a placeholder (to be filled in once known). Since it is a
+  VS Code-based IDE, connecting to this distro via the IDE's Remote-SSH is possible.
+- **`/sandbox-sync` (sync_from_sandbox.py) writes only to `refs/remotes/sandbox/*`** by
+  design (never touches the host's working tree or current branch). Merge or discard
+  fetched work with ordinary git operations on the host.
+
+## Second layer: combining with Claude Code's built-in sandbox
+
+Since the distro is Linux, Claude Code's OS-level sandbox (bubblewrap-based) is
+available. Adding the following to `.claude/settings.json` in a project inside the
+distro further confines Bash execution:
 
 ```json
 {
@@ -272,97 +283,101 @@ Skill 側の指示により実行前に必ずチャット上でユーザーへ�
 }
 ```
 
-## ホスト側ガード: 誤ってホスト側で開いたときの警告・ブロック
+## Host-side guard: warning/blocking when accidentally opened on the host
 
-サンドボックス内のフォルダを**ホスト側の** IDE / エージェントで直接開くと
-(SSHFS マウントや `\\wsl.localhost` 経由)、エージェントがホスト Windows の
-権限で動いてしまい隔離が無意味になる。これを検知するフックを、`install.py` が
-**インストール先プロジェクトにのみ**配置する(ユーザーグローバル設定には入れない)。
+Opening a folder inside the sandbox directly with an IDE / agent **on the host side**
+(via an SSHFS mount or `\\wsl.localhost`) runs the agent with the host Windows
+permissions, defeating the isolation. `install.py` places hooks that detect this
+**only in target projects** (not in user-global settings).
 
-| クライアント | 実体 | 登録先 | 動作 |
+| Client | Hook file | Registered in | Behavior |
 |---|---|---|---|
-| Claude Code | `.claude/hooks/sandbox_guard.py` | `.claude/settings.json`(SessionStart / UserPromptSubmit) | 開始時に警告、プロンプト送信を**ブロック** |
-| Codex CLI | `.codex/hooks/sandbox_guard.py` | `.codex/hooks.json`(SessionStart / UserPromptSubmit) | 開始時に警告、プロンプト送信を**ブロック** |
-| Cursor | `.cursor/hooks/sandbox_guard.py` | `.cursor/hooks.json`(sessionStart / beforeSubmitPrompt) | 開始時にエージェントへ警告、プロンプト送信を**ブロック** |
-| Antigravity | `.agents/hooks/sandbox_guard.py` | `.agents/hooks.json`(PreInvocation / PreToolUse) | モデル呼び出し前に警告を差し込み、**全ツール実行を拒否**(プロンプト送信をブロックするイベントが無いため) |
+| Claude Code | `.claude/hooks/sandbox_guard.py` | `.claude/settings.json` (SessionStart / UserPromptSubmit) | Warns at start, **blocks** prompt submission |
+| Codex CLI | `.codex/hooks/sandbox_guard.py` | `.codex/hooks.json` (SessionStart / UserPromptSubmit) | Warns at start, **blocks** prompt submission |
+| Cursor | `.cursor/hooks/sandbox_guard.py` | `.cursor/hooks.json` (sessionStart / beforeSubmitPrompt) | Warns the agent at start, **blocks** prompt submission |
+| Antigravity | `.agents/hooks/sandbox_guard.py` | `.agents/hooks.json` (PreInvocation / PreToolUse) | Injects a warning before model invocation and **denies all tool execution** (there is no event that can block prompt submission) |
 
-- 検知ロジックは各フックディレクトリの `_sandbox_guard_core.py`(全クライアント共通)
-- プロジェクトはフックごと tar でサンドボックスへ搬入されるため、搬入後の
-  コピーを誤ってホスト側で開いた場合もフックが効く
-- 検知方法: ① `\\wsl.localhost\agent-sandbox` / `\\wsl$\...` パス、
-  ② SSHFS-Win の UNC(`\\sshfs\agent@localhost!2222` 等)とドライブ割り当て、
-  ③ マーカーファイル `.agent-sandbox` の祖先探索(provision.sh がディストロ内に
-  root 所有 + immutable で配置。マウント方法によらず効く)
-- 警告だけにしたい場合は、各登録先からブロック側のイベント
-  (Claude Code / Codex: `UserPromptSubmit`、Cursor: `beforeSubmitPrompt`、
-  Antigravity: `PreToolUse`)のエントリを削除する
-- **Windows 以外では何もしない**: Remote-SSH で正しく開いた場合はディストロ内の
-  エージェントがフックを実行するが、Linux 上なので即終了する(誤検知しない)
-- マーカー検知は provision 再実行(`/sandbox-setup`・`setup_sandbox.py`)後に有効。
-  UNC / SSHFS パターン検知はそれ以前でも効く
+- Detection logic lives in `_sandbox_guard_core.py` in each hook directory (shared by
+  all clients)
+- Projects are copied into the sandbox together with their hooks, so the hooks also
+  take effect if the copied-in project is accidentally opened on the host side
+- Detection methods: ① `\\wsl.localhost\agent-sandbox` / `\\wsl$\...` paths,
+  ② SSHFS-Win UNC paths (`\\sshfs\agent@localhost!2222`, etc.) and mapped drives,
+  ③ ancestor search for the marker file `.agent-sandbox` (placed inside the distro by
+  provision.sh as root-owned + immutable; works regardless of mount method)
+- For warnings only, remove the blocking event's entry from each registration file
+  (Claude Code / Codex: `UserPromptSubmit`, Cursor: `beforeSubmitPrompt`,
+  Antigravity: `PreToolUse`)
+- **Does nothing outside Windows**: when correctly opened via Remote-SSH, the agent
+  inside the distro runs the hook, but it exits immediately on Linux (no false positives)
+- Marker detection takes effect after re-running provisioning (`/sandbox-setup`,
+  `setup_sandbox.py`). UNC / SSHFS pattern detection works even before that
 
-クライアントごとの注意:
+Per-client notes:
 
-- **Codex CLI**: プロジェクトのフックは `.codex/` 層が trusted のときだけ読まれ、
-  フック定義ごとに `/hooks` で承認が要る(定義が変わると再承認)。
-  `.codex/hooks.json` にはフックの絶対パスが書き込まれるため、マシン間で共有しない。
-- **Cursor**: `.cursor/hooks.json` は trusted workspace でのみ実行される。
-  また Cursor は互換のため `.claude/skills/` と Claude Code のフックも読み込むので、
-  Claude Code と Cursor の両方を有効にしたプロジェクトでは Skill の重複表示や
-  フックの二重実行が起きることがある。その場合は `install.py --clients` で片方に絞る。
-- **Antigravity**: `.agents/hooks.json` にはフックの絶対パスが書き込まれるため、
-  マシン間で共有しない。
+- **Codex CLI**: project hooks are loaded only when the `.codex/` layer is trusted, and
+  each hook definition must be approved with `/hooks` (re-approval when a definition
+  changes). `.codex/hooks.json` contains absolute hook paths, so do not share it across
+  machines.
+- **Cursor**: `.cursor/hooks.json` runs only in trusted workspaces.
+  Cursor also loads `.claude/skills/` and Claude Code hooks for compatibility, so in
+  projects with both Claude Code and Cursor enabled, Skills may appear twice and hooks
+  may run twice. In that case, narrow it down to one with `install.py --clients`.
+- **Antigravity**: `.agents/hooks.json` contains absolute hook paths, so do not share it
+  across machines.
 
-⚠️ **サンドボックスが無いときはガードされない**: このフックは
-「サンドボックス搬入済みのプロジェクトを誤ってホスト側で開いた」ケースだけを
-検知するものであり、サンドボックスそのものをセットアップしていない・
-使っていない通常のプロジェクトフォルダでは `is_sandbox_path`(検知条件: 上記①〜③の
-いずれか)が常に False になり、フックは即 return して警告もブロックも一切発生しない。
-つまり「サンドボックス機能を使っていない環境」を保護する仕組みではなく、
-自動承認モードのエージェントに対する唯一の防御線はサンドボックス自体
-(隔離された WSL2 ディストロ)であり、このガードはその隔離を誤って迂回した
-場合の事後検知に過ぎない。
+⚠️ **No guard without a sandbox**: these hooks only detect the case where "a project
+copied into the sandbox was accidentally opened on the host side". In ordinary project
+folders where the sandbox has not been set up or is not used, `is_sandbox_path`
+(detection conditions: any of ①–③ above) is always False, so the hook returns
+immediately and never warns or blocks.
+In other words, it is not a mechanism for protecting environments that do not use the
+sandbox. The only line of defense against an agent in auto-approve mode is the sandbox
+itself (the isolated WSL2 distro); this guard is merely after-the-fact detection for
+when that isolation is accidentally bypassed.
 
-## ファイル構成
+## File layout
 
 ```
 .sandbox-kit/
-├── README.md              ← このファイル
-├── setup_sandbox.py       ← 初回セットアップ(冪等・再実行可)
-├── provision.sh           ← ディストロ内プロビジョニング(setup から自動実行)
-├── wsl.conf               ← 分離設定テンプレート(/etc/wsl.conf に配置される)
-├── open_in_sandbox.py     ← プロジェクト搬入・取り出し(--export)+ IDE 起動
-├── sync_from_sandbox.py   ← 成果物回収(git bundle fetch → refs/remotes/sandbox/*)
-├── reopen_in_sandbox.py   ← 搬入済みプロジェクトへ IDE を繋ぎ直すだけ(再搬入なし)
-└── close_project_in_sandbox.py ← sync してから1プロジェクトだけ削除(ガード付き)
+├── README.md              ← this file
+├── README.ja.md           ← Japanese version of this file
+├── setup_sandbox.py       ← first-time setup (idempotent, re-runnable)
+├── provision.sh           ← provisioning inside the distro (run automatically by setup)
+├── wsl.conf               ← isolation settings template (placed at /etc/wsl.conf)
+├── open_in_sandbox.py     ← copy project in / out (--export) + launch IDE
+├── sync_from_sandbox.py   ← retrieve work (git bundle fetch → refs/remotes/sandbox/*)
+├── reopen_in_sandbox.py   ← just reconnect the IDE to a copied-in project (no re-copy)
+└── close_project_in_sandbox.py ← sync, then remove just one project (guarded)
 ```
 
-## ディストロの破棄・作り直し
+## Destroying and recreating the distro
 
-⚠️ ディストロは**全プロジェクト共有**。素の `wsl --unregister` は確認なしで
-即座に消え、`/home/agent/projects` 配下すべての未 push 作業と認証状態が
-一緒に失われる。破棄は必ずガード付きスクリプトで行うこと:
-
-```
-python <agent-sandbox-kit>/tools/destroy_sandbox.py                        # git 状態を確認してから破棄
-python <agent-sandbox-kit>/tools/destroy_sandbox.py --export-first <退避先>  # 全プロジェクトを退避してから破棄
-/sandbox-setup                                                            # 再作成(認証は再度必要)
-python .sandbox-kit/setup_sandbox.py                                      # スクリプト直接実行
-```
-
-- 未コミット / 未 push / git 管理外のプロジェクトが1つでもあれば一覧を出して
-  拒否する(push で回収してから再実行が推奨。承知のうえの強行は `--force`)
-- 実行前にディストロ名の入力による最終確認がある(スクリプト実行時は `--yes`)
-- 運用の原則: **ディストロは使い捨ての計算環境、永続化は git push のみ**。
-  この原則を守っていれば破棄はいつでも安全
-
-**特定プロジェクトだけ壊れた・作り直したい・片付けたい場合は破棄不要**:
-成果物を回収してから安全に削除したいなら `/sandbox-close`
-(前述「プロジェクトを閉じる」参照)を使う。回収が不要で単に作り直すだけなら
-直接 `rm -rf` でもよい:
+⚠️ The distro is **shared by all projects**. A bare `wsl --unregister` deletes it
+immediately without confirmation, losing all unpushed work under `/home/agent/projects`
+along with authentication state. Always destroy it with the guarded script:
 
 ```
-wsl -d agent-sandbox -- rm -rf /home/agent/projects/<名前>
-/sandbox-open <プロジェクトのパス>                         # 再搬入(Skill 経由)
-python .sandbox-kit/open_in_sandbox.py <プロジェクトのパス> # スクリプト直接実行
+python <agent-sandbox-kit>/tools/destroy_sandbox.py                        # check git state, then destroy
+python <agent-sandbox-kit>/tools/destroy_sandbox.py --export-first <dest>  # back up all projects, then destroy
+/sandbox-setup                                                            # recreate (authentication required again)
+python .sandbox-kit/setup_sandbox.py                                      # run the script directly
+```
+
+- If any project has uncommitted / unpushed changes or is not under git, lists them and
+  refuses (recommended: retrieve via push and re-run. To force it knowingly, use `--force`)
+- Asks for final confirmation by typing the distro name before execution (`--yes` when
+  running the script)
+- Operating principle: **the distro is a disposable compute environment; persistence is
+  via git push only**. As long as you follow this principle, destroying it is always safe
+
+**No need to destroy the distro if only a specific project is broken, needs recreating,
+or needs cleaning up**: to remove it safely after retrieving work, use `/sandbox-close`
+(see "Closing a project" above). If retrieval is unnecessary and you just want to
+recreate it, a direct `rm -rf` is fine too:
+
+```
+wsl -d agent-sandbox -- rm -rf /home/agent/projects/<name>
+/sandbox-open <project path>                         # re-copy (via Skill)
+python .sandbox-kit/open_in_sandbox.py <project path> # run the script directly
 ```

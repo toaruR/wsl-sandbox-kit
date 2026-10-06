@@ -7,7 +7,7 @@ IDE を閉じてしまった後に繋ぎ直したいだけのときに使う。
 
 使い方:
     python .sandbox-kit/reopen_in_sandbox.py [--name <名前>] [--distro agent-sandbox]
-                                             [--ide code|cursor|antigravity]
+                                             [--ide code|cursor|antigravity|agy]
     (--name 省略時はカレントディレクトリ名を使う。
      --ide 省略時は環境変数 AGENT_SANDBOX_IDE、未設定なら code)
 """
@@ -35,7 +35,7 @@ def main():
     ap.add_argument("--name", default=None, help="サンドボックス内でのプロジェクト名(既定: カレントディレクトリ名)")
     ap.add_argument("--distro", default=DEFAULT_DISTRO, help=f"ディストロ名(既定: {DEFAULT_DISTRO})")
     ap.add_argument("--ide", default=DEFAULT_IDE,
-                    help="起動する IDE: code / cursor / antigravity(既定: 環境変数 AGENT_SANDBOX_IDE、未設定なら code)")
+                    help="起動する IDE: code / cursor / antigravity(別名 agy)(既定: 環境変数 AGENT_SANDBOX_IDE、未設定なら code)")
     args = ap.parse_args()
 
     try:

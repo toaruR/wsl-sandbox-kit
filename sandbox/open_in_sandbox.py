@@ -6,7 +6,7 @@
 - node_modules / .venv / __pycache__ はコピーしない(ディストロ内で入れ直す)
 - コピー後、ホスト側から `<IDE> --remote ssh-remote+<distro>` で IDE を起動する
   (WSL リモート拡張は automount 前提で分離ディストロでは動かないため Remote-SSH)。
-  IDE は --ide または環境変数 AGENT_SANDBOX_IDE で code / cursor / antigravity から選ぶ
+  IDE は --ide または環境変数 AGENT_SANDBOX_IDE で code / cursor / antigravity(別名 agy)から選ぶ
 
 コピー元が別の WSL ディストロ上にある場合(例: `\\\\wsl.localhost\\Ubuntu\\home\\...`)は、
 Windows ホスト経由で読まず tar ストリームをディストロ間で直結する
@@ -18,7 +18,7 @@ Windows ホスト経由で読まず tar ストリームをディストロ間で�
 使い方:
     python open_in_sandbox.py [プロジェクトのパス] [--name <名前>]
                               [--distro agent-sandbox] [--force] [--no-code]
-                              [--ide code|cursor|antigravity]
+                              [--ide code|cursor|antigravity|agy]
                               (プロジェクトのパスを省略するとカレントディレクトリを使う。
                                \\\\wsl.localhost\\<別ディストロ>\\... 形式も指定可)
     python open_in_sandbox.py --export <名前> <取り出し先ディレクトリ>
@@ -40,7 +40,8 @@ PROJECTS_DIR = "/home/agent/projects"
 
 # --ide の選択肢 → ホスト側 CLI 名。いずれも VS Code 系で `--remote ssh-remote+<host>` を受け付け、
 # setup_sandbox.py が用意した ~/.ssh/config の Host エントリへ Remote-SSH 拡張で繋ぐ前提。
-IDE_COMMANDS = {"code": "code", "cursor": "cursor", "antigravity": "antigravity-ide"}
+IDE_COMMANDS = {"code": "code", "cursor": "cursor", "antigravity": "antigravity-ide",
+                "agy": "antigravity-ide"}
 DEFAULT_IDE = os.environ.get("AGENT_SANDBOX_IDE", "code")
 
 
@@ -75,7 +76,7 @@ WSL_UNC_RE = re.compile(r"^[\\/]{2}wsl(?:\.localhost|\$)[\\/]([^\\/]+)[\\/](.*)$
 
 
 def parse_wsl_unc(raw: str):
-    """\\wsl.localhost\<distro>\<path> 形式なら (distro, linux_path) を返す。該当しなければ None。
+    r"""\\wsl.localhost\<distro>\<path> 形式なら (distro, linux_path) を返す。該当しなければ None。
 
     Windows ホストの Python でこの形式のパスを直接読み書きすると、実行ビットや
     シンボリックリンクが正しく引き継がれないことがあるため、該当する場合は
@@ -189,6 +190,10 @@ def launch_ide(ide: str, distro: str, linux_dest: str):
     exe = shutil.which(command)
     if not exe:
         raise OpenError(f"{command} コマンドが見つかりません。{ide} の PATH 設定を確認してください。")
+    # 旧版 setup で作った ProxyCommand なしの SSH エントリだと、ディストロのアイドル停止で
+    # 接続が切れる(Connection refused / closed by remote host)ため、起動前に更新しておく
+    from setup_sandbox import ensure_ssh_config
+    ensure_ssh_config(distro)
     subprocess.run([exe, "--remote", f"ssh-remote+{distro}", linux_dest], check=True)
     print(f"{ide} を起動しました(ssh-remote+{distro}:{linux_dest})")
 
@@ -226,7 +231,7 @@ def main():
     ap.add_argument("--force", action="store_true", help="搬入先が既にあっても確認なしで置き換える")
     ap.add_argument("--no-code", action="store_true", help="コピーのみ行い IDE を起動しない")
     ap.add_argument("--ide", default=DEFAULT_IDE,
-                    help="起動する IDE: code / cursor / antigravity(既定: 環境変数 AGENT_SANDBOX_IDE、未設定なら code)")
+                    help="起動する IDE: code / cursor / antigravity(別名 agy)(既定: 環境変数 AGENT_SANDBOX_IDE、未設定なら code)")
     ap.add_argument("--export", action="store_true",
                     help="逆方向: ディストロ内のプロジェクトをホストへ取り出す")
     args = ap.parse_args()

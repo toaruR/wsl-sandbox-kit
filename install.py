@@ -130,16 +130,19 @@ def install_hook_files(target: Path, client: str, dry_run: bool, report: Report)
 
 # ------------------------------------------------------------ registration
 
-def guard_command(script: str, event: str = None, quiet: bool = False) -> str:
+def guard_command(script: str, event: str = None, quiet: bool = False, quote: bool = True) -> str:
     """python が無い環境(Ubuntu 等)と python3 が無い環境(Windows ホスト)の両対応。
 
     Windows ホストの利用者が多いため python をメインにし、python3 をフォールバックにする。
     quiet は1つ目の失敗時の stderr を捨てる(sh 系で実行されると分かっている Claude Code 用。
     他のクライアントは Windows での実行シェルが未確認のため付けない)。
+    quote=False はスクリプトパスをクォートしない(Antigravity 用。Windows では " が \\" に
+    エスケープされて cmd に渡り、クォートごとファイル名として扱われてしまうため)。
     """
     suffix = f" --event {event}" if event else ""
     redirect = " 2>/dev/null" if quiet else ""
-    return f'python "{script}"{suffix}{redirect} || python3 "{script}"{suffix}'
+    path = f'"{script}"' if quote else script
+    return f"python {path}{suffix}{redirect} || python3 {path}{suffix}"
 
 
 def abs_hook_path(target: Path, client: str) -> str:
@@ -258,16 +261,23 @@ def register_cursor(target: Path, dry_run: bool, report: Report):
 
 
 def register_antigravity(target: Path, dry_run: bool, report: Report):
-    """Antigravity は実行時のカレントディレクトリが未確認のため絶対パスで登録する。"""
+    """Antigravity は実行時のカレントディレクトリが未確認のため絶対パスで登録する。
+
+    Windows ではコマンド中の " が正しく渡らないため、パスはクォートせずに書く。
+    """
     path = target / ".agents" / "hooks.json"
     data = load_json(path, report)
     if data is None:
         return
     entry = data.setdefault(ANTIGRAVITY_HOOK_NAME, {})
     script = abs_hook_path(target, "antigravity")
+    if any(c.isspace() for c in script):
+        report.warnings.append(
+            f"Antigravity のフックはパスをクォートできないため、空白を含むパスでは動作しません: {script}")
 
     def handler(event):
-        return {"type": "command", "command": guard_command(script, event), "timeout": HOOK_TIMEOUT}
+        return {"type": "command", "command": guard_command(script, event, quote=False),
+                "timeout": HOOK_TIMEOUT}
 
     results = {
         "PreInvocation": upsert_flat(entry.setdefault("PreInvocation", []), handler("PreInvocation")),

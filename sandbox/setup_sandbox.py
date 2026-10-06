@@ -19,6 +19,7 @@ provision の再実行のみ行う。
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import time
@@ -118,7 +119,7 @@ def setup_ssh_access(distro: str):
     """ホスト側の SSH 鍵と ~/.ssh/config エントリを用意し、公開鍵をディストロへ登録する。
 
     VS Code の WSL リモート拡張は /mnt/c(automount)前提で分離ディストロでは
-    動かないため、接続は Remote-SSH(localhost:2222)で行う。
+    動かないため、接続は Remote-SSH(wsl.exe 経由の ProxyCommand → localhost:2222)で行う。
     """
     ssh_dir = Path.home() / ".ssh"
     ssh_dir.mkdir(exist_ok=True)
@@ -145,19 +146,54 @@ def setup_ssh_access(distro: str):
         'chmod 600 "$f"\n'
         'chown agent:agent "$f"\n')
     run_wsl(["-d", distro, "-u", "root", "--", "bash", "-s"], input_text=register)
+    ensure_ssh_config(distro)
 
+
+def ensure_ssh_config(distro: str):
+    """~/.ssh/config に Host <distro> エントリを用意する。旧版のエントリには ProxyCommand を追記する。
+
+    install.py でキットを更新しただけでは setup が再実行されないため、
+    open_in_sandbox.py も IDE 起動前にこれを呼ぶ。
+    """
+    ssh_dir = Path.home() / ".ssh"
+    ssh_dir.mkdir(exist_ok=True)
+    # WSL はクライアント(wsl.exe)が全て終了すると約 15 秒でディストロを停止し、
+    # sshd も一緒に止まる。localhost:2222 へ直接繋ぐと停止中は Connection refused に
+    # なるため、wsl.exe 経由の ProxyCommand で繋ぐ。接続のたびにディストロが起動し、
+    # 接続中は wsl.exe が生き続けるのでディストロも停止しない
+    proxy = f"  ProxyCommand wsl.exe -d {distro} -u agent --cd / -- nc localhost {SSH_PORT}\n"
     config = ssh_dir / "config"
     existing = config.read_text(encoding="utf-8") if config.exists() else ""
-    if f"Host {distro}" not in existing:
+    lines = existing.splitlines(keepends=True)
+    header = f"Host {distro}"
+    if not any(line.strip() == header for line in lines):
         entry = (f"\nHost {distro}\n"
                  f"  HostName localhost\n"
                  f"  Port {SSH_PORT}\n"
                  f"  User agent\n"
                  f"  IdentityFile ~/.ssh/{distro}_ed25519\n"
-                 f"  StrictHostKeyChecking accept-new\n")
+                 f"  StrictHostKeyChecking accept-new\n"
+                 f"{proxy}")
         with open(config, "a", encoding="utf-8", newline="\n") as fh:
             fh.write(entry)
         print(f"~/.ssh/config に Host {distro} エントリを追加しました")
+        return
+
+    # 旧版が作った ProxyCommand なしのエントリを更新する(ブロック末尾に追記)
+    start = next(i for i, line in enumerate(lines) if line.strip() == header) + 1
+    end = start
+    while end < len(lines) and not re.match(r"\s*(Host|Match)\s", lines[end], re.IGNORECASE):
+        end += 1
+    if any(re.match(r"\s*ProxyCommand\s", line, re.IGNORECASE) for line in lines[start:end]):
+        return
+    while end > start and not lines[end - 1].strip():
+        end -= 1  # 後続ブロックとの空行の前に差し込む
+    if end > 0 and not lines[end - 1].endswith("\n"):
+        lines[end - 1] += "\n"
+    lines.insert(end, proxy)
+    with open(config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("".join(lines))
+    print(f"~/.ssh/config の Host {distro} エントリに ProxyCommand を追加しました")
 
 
 def verify_ssh(distro: str):

@@ -1,85 +1,89 @@
 # agent-sandbox-kit
 
-AI エージェント(Claude Code / Codex CLI / Cursor / Antigravity)を、ホスト Windows から
-分離した専用の WSL2 ディストロ(`agent-sandbox`)内で動かすためのキット。
+[日本語](README.ja.md)
 
-- ディストロの作成・分離設定・プロビジョニング
-- プロジェクトの搬入・IDE(VS Code / Cursor / Antigravity)での Remote-SSH 接続・成果物の回収・削除
-- 搬入済みプロジェクトを誤ってホスト側で開いたときの警告・ブロック(各クライアントのフック)
-- 上記を各クライアントから呼ぶための Skill(`/sandbox-*`)
+A kit for running AI agents (Claude Code / Codex CLI / Cursor / Antigravity) inside a
+dedicated WSL2 distro (`agent-sandbox`) isolated from the Windows host.
 
-仕組み・使い方の詳細は [sandbox/README.md](sandbox/README.md) を参照
-(インストール先には `.sandbox-kit/README.md` として配置される)。
+- Creating, isolating, and provisioning the distro
+- Copying projects in, connecting via Remote-SSH from an IDE (VS Code / Cursor / Antigravity), retrieving work, and removing projects
+- Warning about / blocking a copied-in project that was accidentally opened on the host side (per-client hooks)
+- Skills (`/sandbox-*`) for invoking all of the above from each client
 
-## 動作要件
+See [sandbox/README.md](sandbox/README.md) for how it works and how to use it
+(installed into target projects as `.sandbox-kit/README.md`).
+
+## Requirements
 
 - Windows 10/11 + WSL2
-- ホスト側に Python 3.10 以降(`python` コマンド)
-- 使う IDE と Remote-SSH 拡張
+- Python 3.10 or later on the host (`python` command)
+- Your IDE of choice with a Remote-SSH extension
 
-## インストール
+## Installation
 
 ```
-python install.py <プロジェクトのパス>                                  # 全クライアント
-python install.py <プロジェクトのパス> --clients claude,cursor          # クライアントを絞る
-python install.py <プロジェクトのパス> --dry-run                        # 変更内容の確認のみ
+python install.py <project path>                                  # all clients
+python install.py <project path> --clients claude,cursor          # selected clients only
+python install.py <project path> --dry-run                        # show changes only
 ```
 
-再実行すると差分のあるファイルだけを更新する(冪等)。キット所有ファイルを手で編集
-していても、次回の実行でキット版に戻る。
+Re-running updates only the files that differ (idempotent). Kit-owned files that were
+edited by hand are reverted to the kit version on the next run.
 
-| 配置先 | 内容 | 対象クライアント |
+| Destination | Contents | Clients |
 |---|---|---|
-| `.sandbox-kit/` | サンドボックス操作スクリプト一式 | 共通 |
-| `.claude/skills/sandbox-*/` | Skill | claude |
-| `.agents/skills/sandbox-*/` | Skill | codex / antigravity / cursor |
-| `.claude/hooks/` + `.claude/settings.json` | 誤オープン検知フック | claude |
-| `.codex/hooks/` + `.codex/hooks.json` | 同上 | codex |
-| `.cursor/hooks/` + `.cursor/hooks.json` | 同上 | cursor |
-| `.agents/hooks/` + `.agents/hooks.json` | 同上 | antigravity |
+| `.sandbox-kit/` | Sandbox management scripts | all |
+| `.claude/skills/sandbox-*/` | Skills | claude |
+| `.agents/skills/sandbox-*/` | Skills | codex / antigravity / cursor |
+| `.claude/hooks/` + `.claude/settings.json` | Accidental-open detection hook | claude |
+| `.codex/hooks/` + `.codex/hooks.json` | same | codex |
+| `.cursor/hooks/` + `.cursor/hooks.json` | same | cursor |
+| `.agents/hooks/` + `.agents/hooks.json` | same | antigravity |
 
-フック登録は既存の設定ファイルへマージする(このキットのエントリだけを追加・更新し、
-他のフックや設定には触れない)。`.codex/hooks.json` と `.agents/hooks.json` には
-このマシンの絶対パスが書き込まれるため、リポジトリで共有する場合は `.gitignore` に入れる。
+Hook registrations are merged into existing config files (only this kit's entries are
+added or updated; other hooks and settings are left untouched). `.codex/hooks.json` and
+`.agents/hooks.json` contain absolute paths on this machine, so add them to `.gitignore`
+if the repository is shared.
 
-インストール後の初回セットアップ:
+First-time setup after installation:
 
 ```
-python .sandbox-kit/setup_sandbox.py      # または各クライアントで /sandbox-setup
+python .sandbox-kit/setup_sandbox.py      # or /sandbox-setup from any client
 ```
 
-## リポジトリ構成
+## Repository layout
 
 ```
 agent-sandbox-kit/
-├── install.py                 インストーラ
-├── sandbox/                   → インストール先 .sandbox-kit/
+├── install.py                 installer
+├── sandbox/                   → installed as .sandbox-kit/
 ├── hooks/
-│   ├── _sandbox_guard_core.py 検知ロジック(全クライアント共通)
-│   └── <client>_sandbox_guard.py  クライアント別アダプタ(stdin/stdout 契約の変換)
-├── .claude/skills/            Claude Code 向け Skill
-├── .agents/skills/            Codex CLI / Antigravity / Cursor 向け Skill
-├── tools/destroy_sandbox.py   ディストロ全体のガード付き破棄(配布しない)
+│   ├── _sandbox_guard_core.py detection logic (shared by all clients)
+│   └── <client>_sandbox_guard.py  per-client adapters (stdin/stdout contract translation)
+├── .claude/skills/            Skills for Claude Code
+├── .agents/skills/            Skills for Codex CLI / Antigravity / Cursor
+├── tools/destroy_sandbox.py   guarded destruction of the whole distro (not distributed)
 └── tests/                     python -m unittest discover -s tests
 ```
 
-Skill は `.claude/skills/` と `.agents/skills/` をそれぞれ独立したソースとして保守する
-(現時点で内容が同じでも、片方からもう片方を生成しない)。
+`.claude/skills/` and `.agents/skills/` are maintained as independent sources
+(even where their contents are currently identical, neither is generated from the other).
 
-## ディストロの破棄
+## Destroying the distro
 
-ディストロは全プロジェクト共用のため、破棄はこのリポジトリから行う:
+The distro is shared by all projects, so destroy it from this repository:
 
 ```
-python tools/destroy_sandbox.py                          # git 状態を確認してから破棄
-python tools/destroy_sandbox.py --export-first <退避先>    # 全プロジェクトを退避してから破棄
+python tools/destroy_sandbox.py                          # check git state, then destroy
+python tools/destroy_sandbox.py --export-first <dest>    # back up all projects, then destroy
 ```
 
-## 実機で未確認の事項
+## Not yet verified on real systems
 
-各クライアントの公式ドキュメントに基づいて実装しているが、次の点は実機で確認していない。
+The implementation follows each client's official documentation, but the following
+points have not been verified in practice:
 
-- Codex CLI: `.codex/hooks.json` のフックが実際に発火し、`decision: block` でプロンプトが止まるか
-- Cursor: `workspace_roots` の Windows パス表記、Claude Code フックの互換読み込みとの二重実行の有無
-- Antigravity: フック実行時のシェルとカレントディレクトリ、`PreToolUse` の `deny` で全ツールが止まるか
-- `cursor` / `antigravity-ide` コマンドの `--remote ssh-remote+<host>` 対応
+- Codex CLI: whether hooks in `.codex/hooks.json` actually fire and `decision: block` stops the prompt
+- Cursor: Windows path format of `workspace_roots`; whether hooks run twice due to compatibility loading of Claude Code hooks
+- Antigravity: shell and working directory when hooks run; whether `deny` in `PreToolUse` stops all tools
+- Support for `--remote ssh-remote+<host>` in the `cursor` / `antigravity-ide` commands

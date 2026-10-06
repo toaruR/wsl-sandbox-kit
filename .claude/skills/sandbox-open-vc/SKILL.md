@@ -10,6 +10,6 @@ disable-model-invocation: true
 ## 注意
 
 - `--name` を省略するとカレントディレクトリ名がプロジェクト名として使われる。
-- `--ide` は `code`(VS Code)/ `cursor` / `antigravity` のいずれか。省略時は環境変数 `AGENT_SANDBOX_IDE`、未設定なら `code`。
+- `--ide` は `code`(VS Code)/ `cursor` / `antigravity`(別名 `agy`)のいずれか。省略時は環境変数 `AGENT_SANDBOX_IDE`、未設定なら `code`。
 - 再搬入は行わない(既存コピーの中身には一切触れない)。まだ搬入していない場合は sandbox-open スキルを使う。
 - 実行結果(標準出力・エラー)をそのままユーザーに報告する。
