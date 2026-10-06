@@ -87,3 +87,7 @@ points have not been verified in practice:
 - Cursor: Windows path format of `workspace_roots`; whether hooks run twice due to compatibility loading of Claude Code hooks
 - Antigravity: shell and working directory when hooks run; whether `deny` in `PreToolUse` stops all tools
 - Support for `--remote ssh-remote+<host>` in the `cursor` / `antigravity-ide` commands
+
+## License
+
+[MIT License](LICENSE)

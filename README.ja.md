@@ -85,3 +85,7 @@ python tools/destroy_sandbox.py --export-first <退避先>    # 全プロジェ�
 - Cursor: `workspace_roots` の Windows パス表記、Claude Code フックの互換読み込みとの二重実行の有無
 - Antigravity: フック実行時のシェルとカレントディレクトリ、`PreToolUse` の `deny` で全ツールが止まるか
 - `cursor` / `antigravity-ide` コマンドの `--remote ssh-remote+<host>` 対応
+
+## ライセンス
+
+[MIT License](LICENSE)
